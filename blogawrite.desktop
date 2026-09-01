@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=blogawrite
+GenericName=Markdown Editor
+Comment=Live-preview markdown editor for writing posts
+Exec=blogawrite %f
+Icon=text-markdown
+Terminal=false
+NoDisplay=true
+Categories=Office;WordProcessor;TextEditor;
+MimeType=text/markdown;text/x-markdown;
+StartupNotify=true

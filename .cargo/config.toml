@@ -1,0 +1,6 @@
+# Without a linker named here, qt-build-utils picks one itself: it finds the system
+# `ld` is bfd, decides that will not do for Qt, and falls back to gold — which rustc
+# warns is deprecated. bfd links this project fine, so say so and keep it quiet.
+# Swap in lld or mold if either is installed; both are faster.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=bfd"]
