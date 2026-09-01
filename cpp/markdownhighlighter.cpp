@@ -1,5 +1,6 @@
 #include "markdownhighlighter.h"
 
+#include <QtCore/QVarLengthArray>
 #include <QtGui/QTextBlock>
 #include <QtGui/QTextCursor>
 #include <QtGui/QTextDocument>
@@ -189,11 +190,12 @@ void MarkdownHighlighter::setTarget(QQuickTextDocument *target)
 
 void MarkdownHighlighter::setCursorPosition(int position)
 {
-    if (m_cursorPosition == position) {
+    const int previous = m_cursorPosition;
+    if (previous == position) {
         return;
     }
     m_cursorPosition = position;
-    restyle();
+    restyleCursorLines(previous, position);
     Q_EMIT cursorPositionChanged();
 }
 
@@ -271,6 +273,40 @@ void MarkdownHighlighter::setLineHeight(qreal height)
 void MarkdownHighlighter::restyle()
 {
     rehighlight();
+    applyLineHeight();
+}
+
+/// A moved cursor only changes the lines it left and arrived at, so re-style those rather
+/// than the whole block — on a long one, rehighlighting all of it costs a keystroke dearly.
+/// Code is the exception: its fences open and close with the cursor anywhere inside.
+void MarkdownHighlighter::restyleCursorLines(int from, int to)
+{
+    QTextDocument *doc = document();
+    if (!doc) {
+        return;
+    }
+    QVarLengthArray<QTextBlock, 4> lines;
+    const auto add = [&lines](const QTextBlock &line) {
+        if (!line.isValid()) {
+            return;
+        }
+        for (const QTextBlock &seen : lines) {
+            if (seen.blockNumber() == line.blockNumber()) {
+                return;
+            }
+        }
+        lines.append(line);
+    };
+    add(doc->findBlock(from));
+    add(doc->findBlock(to));
+    if (m_code) {
+        add(doc->firstBlock());
+        add(doc->lastBlock());
+    }
+
+    for (const QTextBlock &line : lines) {
+        rehighlightBlock(line);
+    }
     applyLineHeight();
 }
 

@@ -72,6 +72,7 @@ protected:
 
 private:
     void restyle();
+    void restyleCursorLines(int from, int to);
     QTextCharFormat formatFor(quint16 bits) const;
     void applyLineHeight();
     void markCode(const QString &text, QList<quint16> &mask) const;

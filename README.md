@@ -115,7 +115,10 @@ of hand-written C++) over the raw markdown in the editor's `QTextDocument`: it w
 the inline markup, gives each character the format its construct implies, and shrinks
 the markers themselves away unless the cursor is inside the span they mark. It also
 carries the line spacing, which `TextArea` has no property for. Because it only ever
-sets character formats, the text under it is untouched. Line spacing is the one
+sets character formats, the text under it is untouched. A moved cursor restyles only
+the line it left and the line it reached — in a code block, its fences too, which
+open and close with the cursor anywhere inside. Rehighlighting the whole block
+instead cost 8 ms a keystroke in a long list. Line spacing is the one
 thing it writes to the document, as a block format — that is also how a hidden code
 fence collapses to nothing, since a line's height is not a character's to give.
 
@@ -150,14 +153,22 @@ blocks with a blank line.
 
 The QML is compiled ahead of time by `qmlcachegen` and embedded in the binary, the
 release profile uses thin LTO and one codegen unit, and the lightweight Basic
-Controls style is forced before the engine starts.
-
-Measured on the development machine (warm cache, X11, `sample/post.md`, timed from
-`exec` to the scene graph log line for the first frame carrying content): **≈260 ms**,
-of which ≈215 ms is up to the first buffer swap. Most of that is loading the Qt
-libraries and bringing up the scene graph. The app imports only QtQuick and
+Controls style is forced before the engine starts. The app imports only QtQuick and
 QtQuick.Controls.Basic, and loads no Dialogs module and no platform theme plugin —
 both of which an earlier version pulled in.
+
+The scene graph runs on Qt's software renderer. The OpenGL path spends most of a
+launch bringing the graphics driver up — ~170 ms of ~240 ms on the development
+machine, before a character is drawn — and buys nothing here: the window is text in
+a 720-pixel column, which the software renderer draws in about 6 ms a frame no
+matter how wide the window is. Setting `QT_QUICK_BACKEND` or `QSG_RHI_BACKEND`
+yourself takes the choice back.
+
+Measured on the development machine (warm cache, X11, timed from `exec` to the first
+rendered frame): **≈80 ms**, against ≈240 ms through OpenGL. What is left is about
+12 ms of dynamic linking, 7 ms of `QGuiApplication`, 38 ms of QML and window setup —
+half of it the font database — and 11 ms to draw. Document size barely registers:
+600 blocks start as fast as six, since the list only builds the blocks on screen.
 
 ## Tests
 
