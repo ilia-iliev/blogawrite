@@ -89,6 +89,9 @@ Keys:
 | Key | Does |
 | --- | --- |
 | Ctrl+S | save |
+| Ctrl+B / Ctrl+I / Ctrl+U | wrap the selection in `**`, `*` or `~~`; press again to unwrap |
+| Ctrl+Shift+L / Ctrl+Shift+I | `[…](…)` around the selection, or an empty pair to type into — `!` prefixed for the image form |
+| PageUp / PageDown | a screenful at a time, keeping the block at the far edge selected |
 | Up / Down | at the first or last line, move to the neighbouring block |
 | Backspace | at position 0, merge into the previous block |
 | Enter twice | end the block and start a new one |

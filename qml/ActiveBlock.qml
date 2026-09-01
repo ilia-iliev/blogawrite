@@ -111,8 +111,10 @@ TextArea {
         }
         // Stars work as bits: one is italic, two is bold, three is both. Only this marker's
         // own stars come off, so bold nests inside italic and a second press unpicks it.
-        const run = starRun(start, -1)
-        const marked = run === starRun(end, 1)
+        // Tildes have no such arithmetic — a pair is a strikeout — but the same count answers.
+        const mark = marker.charAt(0)
+        const run = markerRun(mark, start, -1)
+        const marked = run === markerRun(mark, end, 1)
                     && (marker.length === 1 ? run % 2 === 1 : run >= 2)
         if (marked) {
             remove(end, end + marker.length)
@@ -125,10 +127,10 @@ TextArea {
         select(start + marker.length, end + marker.length)
     }
 
-    // How many stars are packed against `position`, looking back (side -1) or on (side 1).
-    function starRun(position, side) {
+    // How many `mark`s are packed against `position`, looking back (side -1) or on (side 1).
+    function markerRun(mark, position, side) {
         let run = 0
-        while (text.charAt(side < 0 ? position - run - 1 : position + run) === "*") {
+        while (text.charAt(side < 0 ? position - run - 1 : position + run) === mark) {
             run += 1
         }
         return run
@@ -177,6 +179,12 @@ TextArea {
             } else if (event.modifiers === (Qt.ControlModifier | Qt.ShiftModifier)) {
                 event.accepted = true
                 root.insertLink("!")
+            }
+            break
+        case Qt.Key_U:
+            if (event.modifiers === Qt.ControlModifier) {
+                event.accepted = true
+                root.surround("~~")
             }
             break
         case Qt.Key_L:
