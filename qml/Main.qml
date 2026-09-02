@@ -1,8 +1,10 @@
 import QtQuick
-import QtQuick.Controls.Basic
 import com.blogawrite
 
-ApplicationWindow {
+// Nothing here comes from QtQuick.Controls. It would be worth about twenty milliseconds
+// of every launch — two libraries and two QML modules, loaded before the first frame —
+// and this window wants three things from it: a window, a scrollbar and a prompt.
+Window {
     id: window
 
     width: 960
@@ -35,8 +37,6 @@ ApplicationWindow {
         cacheBuffer: 800
         boundsBehavior: Flickable.StopAtBounds
 
-        ScrollBar.vertical: ScrollBar {}
-
         delegate: Item {
             id: block
 
@@ -55,6 +55,13 @@ ApplicationWindow {
             onEditingChanged: {
                 if (!editing) {
                     tapPoint = Qt.point(-1, -1)
+                }
+            }
+
+            // Used to hand the keyboard back after the close prompt has had it.
+            function refocus() {
+                if (loader.item) {
+                    loader.item.forceActiveFocus()
                 }
             }
 
@@ -116,6 +123,15 @@ ApplicationWindow {
                     onMergeRequested: doc.mergeWithPrevious(block.index)
                     onLeave: (direction) => doc.activate(block.index + direction)
                 }
+            }
+        }
+
+        // Hand the keyboard back to the block being edited. A Controls Popup returned it
+        // by itself; this one has to be asked.
+        function refocusActive() {
+            const item = view.itemAtIndex(doc.activeIndex)
+            if (item) {
+                item.refocus()
             }
         }
 
@@ -194,6 +210,52 @@ ApplicationWindow {
         }
     }
 
+    // Where you are in the document, shown while it is being scrolled and fading out
+    // once it settles — the job Controls' ScrollBar was doing, minus the dragging,
+    // which this never needed.
+    Rectangle {
+        id: scrollBar
+
+        anchors.right: parent.right
+        anchors.rightMargin: 2
+        width: 6
+        radius: 3
+        color: Theme.muted
+        visible: view.contentHeight > view.height
+        y: view.visibleArea.yPosition * view.height
+        height: Math.max(24, view.visibleArea.heightRatio * view.height)
+        opacity: 0
+
+        // A wheel notch moves the view and is over with; the bar has to outlast it, or
+        // it would show for the single frame the movement took.
+        Timer {
+            id: linger
+            interval: 700
+        }
+
+        Connections {
+            target: view
+            function onContentYChanged() {
+                linger.restart()
+            }
+        }
+
+        // There the moment you scroll, gone gently once you stop — so the transition
+        // is on the way out only.
+        states: State {
+            name: "scrolling"
+            when: linger.running
+            PropertyChanges {
+                scrollBar.opacity: 0.4
+            }
+        }
+
+        transitions: Transition {
+            to: ""
+            NumberAnimation { property: "opacity"; duration: 400 }
+        }
+    }
+
     // Content scrolls under the window edge; fade it out rather than cutting it dead.
     Rectangle {
         anchors.left: parent.left
@@ -219,64 +281,86 @@ ApplicationWindow {
     }
 
     // A prompt line at the foot of the window rather than a box of buttons.
-    Popup {
+    Item {
         id: closePrompt
 
-        parent: window.contentItem
-        width: parent.width
-        y: parent.height - height
-        padding: 12
-        modal: true
-        dim: false
-        focus: true
+        anchors.fill: parent
+        visible: false
 
-        // It is answered by keystroke, so it has to hold the keyboard itself.
-        onOpened: prompt.forceActiveFocus()
-
-        background: Rectangle {
-            color: Theme.activeBackground
-            border.color: Theme.border
+        function open() {
+            visible = true
+            // It is answered by keystroke, so it has to hold the keyboard itself.
+            forceActiveFocus()
         }
 
-        contentItem: Row {
-            id: prompt
+        function cancel() {
+            visible = false
+            view.refocusActive()
+        }
 
-            spacing: 16
-
-            Text {
-                text: qsTr("Save changes to %1?").arg(window.fileName)
-                color: Theme.text
-                font.family: Theme.monoFamily
-                font.pixelSize: Theme.bodySize
+        function saveAndQuit() {
+            // A failed save keeps the window open rather than losing the text.
+            if (doc.save()) {
+                Qt.quit()
             }
+        }
 
-            Text {
-                text: qsTr("[y] save   [n] discard   [esc] cancel")
-                color: Theme.muted
-                font.family: Theme.monoFamily
-                font.pixelSize: Theme.bodySize
-            }
+        function discardAndQuit() {
+            // Nothing is written; clearing the flag just lets the close through.
+            doc.dirty = false
+            Qt.quit()
+        }
 
-            Keys.onPressed: (event) => {
-                event.accepted = true
-                switch (event.key) {
-                case Qt.Key_Y:
-                case Qt.Key_Return:
-                case Qt.Key_Enter:
-                    // A failed save keeps the window open rather than losing the text.
-                    if (doc.save()) {
-                        Qt.quit()
-                    }
-                    break
-                case Qt.Key_N:
-                    // Nothing is written; clearing the flag just lets the close through.
-                    doc.dirty = false
-                    Qt.quit()
-                    break
-                case Qt.Key_Escape:
-                    closePrompt.close()
-                    break
+        // Nothing behind it is to be clicked while it is up. This is the modality.
+        MouseArea {
+            anchors.fill: parent
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: prompt.height + 24
+            color: Theme.activeBackground
+            border.color: Theme.border
+
+            Row {
+                id: prompt
+
+                x: 12
+                y: 12
+                spacing: 16
+
+                Text {
+                    text: qsTr("Save changes to %1?").arg(window.fileName)
+                    color: Theme.text
+                    font.family: Theme.monoFamily
+                    font.pixelSize: Theme.bodySize
                 }
+
+                Text {
+                    text: qsTr("[y] save   [n] discard   [esc] cancel")
+                    color: Theme.muted
+                    font.family: Theme.monoFamily
+                    font.pixelSize: Theme.bodySize
+                }
+            }
+        }
+
+        Keys.onPressed: (event) => {
+            event.accepted = true
+            switch (event.key) {
+            case Qt.Key_Y:
+            case Qt.Key_Return:
+            case Qt.Key_Enter:
+                closePrompt.saveAndQuit()
+                break
+            case Qt.Key_N:
+                closePrompt.discardAndQuit()
+                break
+            case Qt.Key_Escape:
+                closePrompt.cancel()
+                break
             }
         }
     }

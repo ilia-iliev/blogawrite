@@ -1,11 +1,14 @@
 import QtQuick
-import QtQuick.Controls.Basic
 import com.blogawrite
 import com.blogawrite.text
 
 // The block under the cursor. Prose is styled as it is written, with the markers shrunk
 // away; structure — headings, quotes, tables, rules — opens up into its raw markdown.
-TextArea {
+//
+// A plain TextEdit, not Controls' TextArea, which is a TextEdit with a background and a
+// placeholder wrapped around it: every property this sets is one it overrides anyway, and
+// naming it would load the whole of QtQuick.Controls before the first frame.
+TextEdit {
     id: root
 
     property string source
@@ -26,7 +29,7 @@ TextArea {
     signal mergeRequested()
     signal leave(int direction)
 
-    wrapMode: TextArea.Wrap
+    wrapMode: TextEdit.Wrap
     selectByMouse: true
     persistentSelection: true
     // Inverted ink rather than the stock blue, which fights the paper-coloured theme.
@@ -41,8 +44,12 @@ TextArea {
     // the box below grows upwards instead.
     topPadding: code ? 0 : padding
 
-    background: Rectangle {
+    // TextArea's `background`, as the child it would have been: behind the text, and
+    // sized to the editor rather than to itself.
+    Rectangle {
+        z: -1
         visible: !root.live
+        width: root.width
         y: root.code ? -6 : 0
         height: root.height + (root.code ? 12 : 0)
         color: root.code ? Theme.codeBackground : Theme.activeBackground

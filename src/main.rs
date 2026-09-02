@@ -3,7 +3,7 @@ pub mod parse;
 pub mod state;
 pub mod theme;
 
-use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QQuickStyle, QString, QUrl};
+use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QUrl};
 
 // Registers `MarkdownHighlighter` into the QML module; defined in cpp/.
 unsafe extern "C" {
@@ -47,7 +47,6 @@ fn main() {
     }
     prefer_software_renderer();
     leave_decorations_to_the_compositor();
-    QQuickStyle::set_style(&QString::from("Basic"));
 
     let mut app = QGuiApplication::new();
     unsafe { blogawrite_register_types() };

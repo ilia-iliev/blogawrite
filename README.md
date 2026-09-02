@@ -49,15 +49,13 @@ nothing itself, GNOME being the one that matters, draws no title bar until you s
 
 ## Build from source
 
-Needs Rust 1.85+, a C++ compiler, and Qt 6.2+ dev packages with QtQuick and
-QtQuick.Controls.
+Needs Rust 1.85+, a C++ compiler, and Qt 6.2+ dev packages with QtQuick.
 
 ```sh
 # Debian / Ubuntu — the QML modules are split across packages, and QtQuick pulls in
-# the last four at runtime whether or not you import them yourself
+# the last three at runtime whether or not you import them yourself
 sudo apt install build-essential qt6-base-dev qt6-declarative-dev qt6-wayland \
-    qml6-module-qtquick qml6-module-qtquick-controls \
-    qml6-module-qtqml-workerscript qml6-module-qtquick-templates \
+    qml6-module-qtquick qml6-module-qtqml-workerscript \
     qml6-module-qtquick-window qml6-module-qtquick-shapes
 # Fedora
 sudo dnf install gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtwayland
@@ -119,7 +117,7 @@ Closing with unsaved changes prompts at the foot of the window: `y` saves and cl
 
 - **Blank-line runs collapse.** Three or more blank lines between blocks become one on
   save. Block contents are preserved exactly.
-- **Undo is per block.** The TextArea's own undo stack, reset when you leave a block.
+- **Undo is per block.** The TextEdit's own undo stack, reset when you leave a block.
 - **Images inside a paragraph do not show while you edit it.** A QTextDocument cannot
   put a picture into text it does not own, so you get the alt text instead.
 - **Hidden markers are squeezed, not removed.** Qt cannot hide characters in an
