@@ -268,9 +268,9 @@ Window {
         }
     }
 
-    Shortcut { sequence: StandardKey.Save; onActivated: doc.save() }
-    Shortcut { sequence: StandardKey.MoveToNextPage; onActivated: view.page(1) }
-    Shortcut { sequence: StandardKey.MoveToPreviousPage; onActivated: view.page(-1) }
+    Shortcut { sequences: [StandardKey.Save]; onActivated: doc.save() }
+    Shortcut { sequences: [StandardKey.MoveToNextPage]; onActivated: view.page(1) }
+    Shortcut { sequences: [StandardKey.MoveToPreviousPage]; onActivated: view.page(-1) }
 
     onClosing: (close) => {
         doc.rememberPosition()
