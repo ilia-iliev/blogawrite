@@ -42,7 +42,10 @@ install -Dm644 blogawrite.desktop ~/.local/share/applications/blogawrite.desktop
 Built against glibc 2.35, which means Debian 12, Ubuntu 22.04, Fedora 36 and anything
 newer. x86_64 only. It carries both of Qt's display-server plugins and chooses between
 them at startup — Wayland natively on a Wayland session, X11 otherwise. To override,
-set `QT_QPA_PLATFORM` to `wayland` or `xcb`.
+set `QT_QPA_PLATFORM` to `wayland` or `xcb`. Decorating the window is left to the
+window manager, which is what i3 and sway do; a Wayland compositor that decorates
+nothing itself, GNOME being the one that matters, draws no title bar until you set
+`QT_WAYLAND_DISABLE_WINDOWDECORATION=0` and let Qt draw its own.
 
 ## Build from source
 

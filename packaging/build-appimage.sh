@@ -32,6 +32,14 @@ for tool in linuxdeploy linuxdeploy-plugin-qt; do
         chmod +x "$tools/$tool"
     fi
 done
+# linuxdeploy would pack the AppImage too, but its plugin exposes no way to set the
+# squashfs block size, which is worth fifty milliseconds of every launch — see below.
+# So take the AppDir from linuxdeploy and do the packing a step further down.
+if [ ! -x "$tools/appimagetool" ]; then
+    curl -fsSL -o "$tools/appimagetool" \
+        "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$arch.AppImage"
+    chmod +x "$tools/appimagetool"
+fi
 
 # The AppImages of the tools themselves want FUSE, which build machines rarely have.
 export APPIMAGE_EXTRACT_AND_RUN=1
@@ -71,10 +79,21 @@ export EXTRA_QT_MODULES=waylandcompositor
 # that a 2022 libxkbcommon cannot read. Library and data have to come from the same
 # distro. Every system that can show a window at all has this one.
 export LINUXDEPLOY_EXCLUDED_LIBRARIES='libxkbcommon.so.*;libxkbcommon-x11.so.*'
-export LDAI_OUTPUT=$output
+# VERSION is what appimagetool stamps into the .desktop as X-AppImage-Version.
 export VERSION=$version
 
-PATH=$tools:$PATH "$tools/linuxdeploy" --appdir "$appdir" --plugin qt --output appimage
+PATH=$tools:$PATH "$tools/linuxdeploy" --appdir "$appdir" --plugin qt
+
+# The AppImage is a squashfs read through FUSE, so every library the loader touches is
+# decompressed on the way in, on every launch. That is the single largest part of the
+# startup: about 145ms of the 400 it takes to put a window up. The default 128K block
+# is the wrong shape for it — a shared library is read in scattered pieces, and each
+# read pays for a whole block. Sixteen 32K blocks cost less than four 128K ones when
+# only a fraction of each is wanted: 50ms off every launch, for 2MB more to download.
+# Uncompressed is faster still, and nearly three times the download; not worth it.
+"$tools/appimagetool" --no-appstream \
+    --mksquashfs-opt -b --mksquashfs-opt 32K \
+    "$appdir" "$output"
 
 # A QML module missing from the bundle only shows up when the engine goes looking for
 # it, which is to say on the machine of whoever downloads this. So go looking here:

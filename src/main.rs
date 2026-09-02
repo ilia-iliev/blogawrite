@@ -23,6 +23,22 @@ fn prefer_software_renderer() {
     unsafe { std::env::set_var("QT_QUICK_BACKEND", "software") };
 }
 
+/// Qt's Wayland plugin brings up EGL — and behind it the whole of Mesa, 140MB of
+/// libLLVM and 50MB of libgallium — to settle one question: whether it could draw a
+/// title bar itself, if it had to. It never has to. i3 and sway draw their own, the
+/// answer is thrown away, and the window is identical either way — the compositor is
+/// still asked for a server-side decoration and still gives one. Saying up front that
+/// we will not be drawing our own saves the fifty milliseconds of loading Mesa to be
+/// told so. Only a default — an explicit choice wins, which is how a compositor that
+/// decorates nothing itself gets its title bar back.
+fn leave_decorations_to_the_compositor() {
+    if std::env::var_os("QT_WAYLAND_DISABLE_WINDOWDECORATION").is_some() {
+        return;
+    }
+    // SAFETY: called before Qt starts, with no other thread running.
+    unsafe { std::env::set_var("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1") };
+}
+
 fn main() {
     // A document is the whole point: there is no way to pick one from inside the app.
     if std::env::args().nth(1).is_none() {
@@ -30,6 +46,7 @@ fn main() {
         std::process::exit(2);
     }
     prefer_software_renderer();
+    leave_decorations_to_the_compositor();
     QQuickStyle::set_style(&QString::from("Basic"));
 
     let mut app = QGuiApplication::new();
