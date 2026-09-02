@@ -111,15 +111,12 @@ PATH=$tools:$PATH "$tools/linuxdeploy" --appdir "$appdir" --plugin qt
 # loader opens anyway, milliseconds of squashfs. Take them back out, from the leaves
 # in: first what the app cannot use, then the libraries nothing left points at.
 
-# The QML module directories go entirely. Our binary links Qt6Quick itself, so
-# `import QtQuick` is answered out of the library's own type registration and the
-# engine never opens qml/QtQuick/qmldir at all — with the whole tree gone, and the
-# host's Qt hidden, it still loads Main.qml. What linuxdeploy put there is every
-# module the scanner could reach from QtQuick, Controls and Dialogs and Pdf and
-# Particles included; nothing here imports one. The smoke test below is what makes
-# this safe to say: a QML file that grows an import this bundle cannot answer fails
-# the second run.
-rm -rf "$appdir/usr/qml"
+# QtQuick registers itself out of the linked library, but its implicit import still
+# needs QtQml.WorkerScript. Everything else the scanner found is unreachable: Controls
+# and Dialogs and Pdf and Particles included. The smoke test below makes this safe: a
+# QML file that grows an import this bundle cannot answer fails the second run.
+find "$appdir/usr/qml" -mindepth 1 -maxdepth 1 ! -name QtQml -exec rm -rf {} +
+find "$appdir/usr/qml/QtQml" -mindepth 1 -maxdepth 1 ! -name WorkerScript -exec rm -rf {} +
 
 # Qt opens every plugin in imageformats at once, the first time anything asks what
 # formats it can read — so one `![](picture.png)` in a document pulls in the lot. On
