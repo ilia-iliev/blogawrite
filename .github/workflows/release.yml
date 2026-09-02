@@ -1,0 +1,52 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    # The AppImage carries its own Qt but uses the host's glibc, so build it against
+    # the oldest one we want to support: 22.04's 2.35 covers Debian 12, Ubuntu 22.04
+    # and Fedora 36 onwards.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt and a compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential file qt6-base-dev qt6-declarative-dev \
+            qml6-module-qtquick qml6-module-qtquick-controls \
+            qml6-module-qtqml-workerscript qml6-module-qtquick-templates \
+            qml6-module-qtquick-window qml6-module-qtquick-shapes
+
+      - name: Use current stable Rust
+        run: rustup update --no-self-update stable && rustup default stable
+
+      - name: Build the AppImage
+        run: ./packaging/build-appimage.sh
+
+      - name: Checksum
+        run: cd dist && sha256sum *.AppImage > SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blogawrite-appimage
+          path: dist/*
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # The release may already exist — a tag pushed before this workflow did, or a
+        # re-run. Create it if it is new, otherwise just hang the files on it.
+        run: |
+          gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME" dist/* \
+            || gh release upload "$GITHUB_REF_NAME" dist/* --clobber

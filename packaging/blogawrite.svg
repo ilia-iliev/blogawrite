@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>blogawrite</title>
+  <rect x="8" y="8" width="240" height="240" rx="44" fill="#FAFAF7" stroke="#E4E0D6" stroke-width="4"/>
+  <!-- A heading, rendered bold, over body text: what the editor shows while you type. -->
+  <rect x="52" y="70" width="118" height="20" rx="10" fill="#2D2A26"/>
+  <rect x="52" y="116" width="152" height="11" rx="5.5" fill="#8A8378"/>
+  <rect x="52" y="146" width="124" height="11" rx="5.5" fill="#8A8378"/>
+  <rect x="52" y="176" width="76" height="11" rx="5.5" fill="#8A8378"/>
+  <!-- The cursor, in the accent green. -->
+  <rect x="138" y="168" width="7" height="27" rx="3.5" fill="#2F6F4E"/>
+</svg>
