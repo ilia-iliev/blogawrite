@@ -64,6 +64,13 @@ export EXTRA_PLATFORM_PLUGINS="libqoffscreen.so;$wayland"
 # graphics integration that puts Qt Quick on the GPU: the module is named for the
 # compositor, but what it deploys is the client's half.
 export EXTRA_QT_MODULES=waylandcompositor
+# Leave libxkbcommon to the host. It reads the keyboard and Compose tables out of
+# /usr/share, which belong to the host too, and a bundled copy older than those
+# tables rejects every keysym it has not heard of — five lines of
+# `unrecognized keysym "dead_hamza"` on Fedora 44, one per line of its Compose file
+# that a 2022 libxkbcommon cannot read. Library and data have to come from the same
+# distro. Every system that can show a window at all has this one.
+export LINUXDEPLOY_EXCLUDED_LIBRARIES='libxkbcommon.so.*;libxkbcommon-x11.so.*'
 export LDAI_OUTPUT=$output
 export VERSION=$version
 
@@ -100,6 +107,13 @@ wanted=(wayland-shell-integration/libxdg-shell.so
         wayland-graphics-integration-client/libqt-plugin-wayland-egl.so)
 for platform in ${wayland//;/ }; do
     wanted+=("platforms/$platform")
+done
+
+for lib in "$appdir"/usr/lib/libxkbcommon*; do
+    if [ -e "$lib" ]; then
+        echo "smoke test: $(basename "$lib") got bundled; it has to stay the host's" >&2
+        exit 1
+    fi
 done
 
 for plugin in "${wanted[@]}"; do
