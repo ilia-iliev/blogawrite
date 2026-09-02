@@ -38,10 +38,32 @@ export APPIMAGE_EXTRACT_AND_RUN=1
 # The Qt plugin finds Qt through qmake, and reads the QML imports to know which QML
 # modules to bring. Ours are compiled into the binary, so point it at the sources.
 export QMAKE=${QMAKE:-$(command -v qmake6)}
+if [ ! -x "${QMAKE:-}" ]; then
+    echo "qmake6 not on PATH — set QMAKE to it, or install the Qt 6 dev packages" >&2
+    exit 1
+fi
 export QML_SOURCES_PATHS=$repo/qml
-# xcb comes by default — under Wayland the app runs through XWayland. Offscreen is
-# what the smoke test below draws into.
-export EXTRA_PLATFORM_PLUGINS=libqoffscreen.so
+
+# One AppImage for both display servers: xcb comes by default, and Qt picks between
+# the two at startup — wayland when it is a Wayland session, xcb otherwise. Qt has
+# renamed these plugins along the way (6.2 splits them into libqwayland-generic.so
+# and libqwayland-egl.so, later versions merge them into libqwayland.so), so take
+# whichever ones this Qt has rather than naming them. Offscreen is what the smoke
+# test below draws into.
+platforms=$("$QMAKE" -query QT_INSTALL_PLUGINS)/platforms
+# `|| true`: with no match ls exits non-zero, and set -e would end the run here
+# rather than at the message below, which is the one worth reading.
+wayland=$(cd "$platforms" && ls libqwayland*.so 2>/dev/null | paste -sd';') || true
+if [ -z "$wayland" ]; then
+    echo "no Qt Wayland platform plugin in $platforms — install qt6-wayland" >&2
+    exit 1
+fi
+export EXTRA_PLATFORM_PLUGINS="libqoffscreen.so;$wayland"
+# Deploying a libqwayland* platform plugin brings the window decorations and the
+# shell integration along with it. This adds the third directory, the client-side
+# graphics integration that puts Qt Quick on the GPU: the module is named for the
+# compositor, but what it deploys is the client's half.
+export EXTRA_QT_MODULES=waylandcompositor
 export LDAI_OUTPUT=$output
 export VERSION=$version
 
@@ -69,5 +91,28 @@ if grep -Eiq 'not installed|failed to load|no such file|could not find' "$smoke/
     cat "$smoke/log" >&2
     exit 1
 fi
+
+# The build machine has no compositor to open a Wayland window on, and the run above
+# went to offscreen, so neither would notice the Wayland half of the bundle going
+# missing — which is how it came to be missing for the first two releases. Check it
+# is there instead, and that nothing it pulls in was left behind.
+wanted=(wayland-shell-integration/libxdg-shell.so
+        wayland-graphics-integration-client/libqt-plugin-wayland-egl.so)
+for platform in ${wayland//;/ }; do
+    wanted+=("platforms/$platform")
+done
+
+for plugin in "${wanted[@]}"; do
+    path=$appdir/usr/plugins/$plugin
+    if [ ! -f "$path" ]; then
+        echo "smoke test: $plugin is not in the bundle" >&2
+        exit 1
+    fi
+    if LD_LIBRARY_PATH=$appdir/usr/lib ldd "$path" | grep -q 'not found'; then
+        echo "smoke test: $plugin is missing a library it needs" >&2
+        LD_LIBRARY_PATH=$appdir/usr/lib ldd "$path" | grep 'not found' >&2
+        exit 1
+    fi
+done
 
 echo "built $output"

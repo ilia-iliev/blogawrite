@@ -40,7 +40,9 @@ install -Dm644 blogawrite.desktop ~/.local/share/applications/blogawrite.desktop
 ```
 
 Built against glibc 2.35, which means Debian 12, Ubuntu 22.04, Fedora 36 and anything
-newer. x86_64 only. Under Wayland it draws through XWayland.
+newer. x86_64 only. It carries both of Qt's display-server plugins and chooses between
+them at startup — Wayland natively on a Wayland session, X11 otherwise. To override,
+set `QT_QPA_PLATFORM` to `wayland` or `xcb`.
 
 ## Build from source
 
@@ -50,14 +52,14 @@ QtQuick.Controls.
 ```sh
 # Debian / Ubuntu — the QML modules are split across packages, and QtQuick pulls in
 # the last four at runtime whether or not you import them yourself
-sudo apt install build-essential qt6-base-dev qt6-declarative-dev \
+sudo apt install build-essential qt6-base-dev qt6-declarative-dev qt6-wayland \
     qml6-module-qtquick qml6-module-qtquick-controls \
     qml6-module-qtqml-workerscript qml6-module-qtquick-templates \
     qml6-module-qtquick-window qml6-module-qtquick-shapes
 # Fedora
-sudo dnf install gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel
+sudo dnf install gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtwayland
 # Arch
-sudo pacman -S base-devel qt6-base qt6-declarative
+sudo pacman -S base-devel qt6-base qt6-declarative qt6-wayland
 ```
 
 ```sh
@@ -69,10 +71,12 @@ install -Dm644 packaging/blogawrite.svg \
 ```
 
 `packaging/build-appimage.sh` builds the AppImage itself: it packs the release binary
-together with the Qt it needs, then opens a document offscreen to check the bundle is
-whole before calling it done. Build it on the oldest distro you mean to support —
-glibc is the one thing an AppImage cannot bring along. Tagging `v*` runs the same
-script on Ubuntu 22.04 and attaches the result to a GitHub release.
+together with the Qt it needs — both the X11 and the Wayland platform plugins, so the
+qtwayland packages above are required to build it even if you only run under X11 —
+then opens a document offscreen to check the bundle is whole before calling it done.
+Build it on the oldest distro you mean to support — glibc is the one thing an AppImage
+cannot bring along. Tagging `v*` runs the same script on Ubuntu 22.04 and attaches the
+result to a GitHub release.
 
 ## Run
 
