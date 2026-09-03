@@ -1,18 +1,28 @@
 # blogawrite
 
-A live-preview markdown editor for Linux, in the style of Typora. Bold is bold, links
-are links, and the markup around a construct only appears when the cursor is inside
-it. The buffer stays raw markdown — it is styled, never rewritten — so the file is
-exactly what you typed.
+A minimal markdown editor for Linux. You type markdown and it looks like the finished
+page while you type — bold is bold, links are links. Only the block your cursor is in
+shows its raw source. Same idea as Typora, in one small window with no menus.
 
-One document, one window, explicit saving, keyboard only. Rust core over a Qt Quick
-UI via [cxx-qt](https://github.com/KDAB/cxx-qt), rendered by Qt's own
-`Text.MarkdownText`.
+![blogawrite editing a document](docs/screenshot.png)
+
+The file on disk stays plain markdown. The editor styles it, it never rewrites it, so
+what you saved is what you typed.
+
+## What it does
+
+- Renders as you write — headings, lists, quotes, tables, code fences, links, images
+- No split screen, no preview pane
+- Ctrl+B / Ctrl+I / Ctrl+U for bold, italic, strikethrough; Ctrl+Shift+L for a link,
+  Ctrl+Shift+I for an image
+- Ctrl+S to save. Nothing is written until you do, and it asks before closing on
+  unsaved changes
+- Remembers where you left off in each file
+- One window, one document, keyboard only
 
 ## Install
 
-One file, which carries its own Qt. There is nothing else to install, and nothing
-left behind afterwards but the file itself.
+A single file that carries its own Qt. Nothing to install, nothing left behind.
 
 ```sh
 curl -LO https://github.com/ilia-iliev/blogawrite/releases/latest/download/blogawrite-x86_64.AppImage
@@ -20,18 +30,12 @@ chmod +x blogawrite-x86_64.AppImage
 ./blogawrite-x86_64.AppImage post.md
 ```
 
-That URL always serves the newest release — the name carries no version, so it does
-not go stale. Which version you ended up with is on the [releases
-page](https://github.com/ilia-iliev/blogawrite/releases), and inside the file as
-`X-AppImage-Version`. To check the download, `SHA256SUMS` sits beside it:
+That URL always serves the newest release. `SHA256SUMS` sits beside it on the
+[releases page](https://github.com/ilia-iliev/blogawrite/releases) if you want to check
+the download.
 
-```sh
-curl -LO https://github.com/ilia-iliev/blogawrite/releases/latest/download/SHA256SUMS
-sha256sum -c SHA256SUMS
-```
-
-To keep it, put it on your path under the plain name, which is what the desktop file's
-`Exec=` expects — install that too and markdown files start offering it in "Open with":
+To keep it around, put it on your path under the plain name and install the desktop
+file — markdown files then offer it under "Open with":
 
 ```sh
 install -Dm755 blogawrite-x86_64.AppImage ~/.local/bin/blogawrite
@@ -39,21 +43,57 @@ curl -fsSLO https://raw.githubusercontent.com/ilia-iliev/blogawrite/main/blogawr
 install -Dm644 blogawrite.desktop ~/.local/share/applications/blogawrite.desktop
 ```
 
-Built against glibc 2.35, which means Debian 12, Ubuntu 22.04, Fedora 36 and anything
-newer. x86_64 only. It carries both of Qt's display-server plugins and chooses between
-them at startup — Wayland natively on a Wayland session, X11 otherwise. To override,
-set `QT_QPA_PLATFORM` to `wayland` or `xcb`. Decorating the window is left to the
-window manager, which is what i3 and sway do; a Wayland compositor that decorates
-nothing itself, GNOME being the one that matters, draws no title bar until you set
-`QT_WAYLAND_DISABLE_WINDOWDECORATION=0` and let Qt draw its own.
+x86_64 only, built against glibc 2.35 — Debian 12, Ubuntu 22.04, Fedora 36 and newer.
+It picks Wayland or X11 at startup; override with `QT_QPA_PLATFORM=wayland` or `xcb`.
+The window border is left to the window manager, which suits i3 and sway. GNOME draws
+none, so set `QT_WAYLAND_DISABLE_WINDOWDECORATION=0` there to get a title bar.
+
+## Using it
+
+```sh
+blogawrite post.md
+```
+
+The path is required — there is no file picker, and no open, new or save-as. A path
+that does not exist yet opens an empty document that the first save creates.
+
+Blocks behave differently while the cursor sits in them:
+
+| Block | While you edit it |
+| --- | --- |
+| paragraph, list | stays rendered; `**`, `*`, `` ` ``, `~~` and `[…](…)` appear only around the thing under the cursor |
+| fenced code | stays rendered, fences appear at the first and last line |
+| heading, quote, table, rule | opens up into raw markdown |
+| lone image | keeps the picture, with its `![…](…)` line underneath |
+
+Other keys:
+
+| Key | Does |
+| --- | --- |
+| PageUp / PageDown | a screenful, selecting the block at the far edge |
+| Up / Down | at the first or last line, move to the neighbouring block |
+| Backspace | at the start of a block, merge it into the one before |
+| Enter twice | end the block and start a new one |
+
+Closing with unsaved changes asks at the foot of the window: `y` saves and closes, `n`
+discards, `esc` goes back.
+
+## Rough edges
+
+- Three or more blank lines between blocks collapse to one on save. Block contents are
+  untouched.
+- Undo is per block — it resets when you leave one.
+- An image inside a paragraph shows its alt text while you edit that paragraph.
+- Hidden markers are squeezed rather than removed, so a marker leaves a fraction of a
+  pixel behind.
 
 ## Build from source
 
-Needs Rust 1.85+, a C++ compiler, and Qt 6.2+ dev packages with QtQuick.
+Needs Rust 1.85+, a C++ compiler, and Qt 6.2+ with QtQuick.
 
 ```sh
-# Debian / Ubuntu — the QML modules are split across packages, and QtQuick pulls in
-# the last three at runtime whether or not you import them yourself
+# Debian / Ubuntu — QtQuick pulls in the last three at runtime whether you import
+# them yourself or not
 sudo apt install build-essential qt6-base-dev qt6-declarative-dev qt6-wayland \
     qml6-module-qtquick qml6-module-qtqml-workerscript \
     qml6-module-qtquick-window qml6-module-qtquick-shapes
@@ -71,59 +111,15 @@ install -Dm644 packaging/blogawrite.svg \
     ~/.local/share/icons/hicolor/scalable/apps/blogawrite.svg
 ```
 
-`packaging/build-appimage.sh` builds the AppImage itself: it packs the release binary
-together with the Qt it needs — both the X11 and the Wayland platform plugins, so the
-qtwayland packages above are required to build it even if you only run under X11 —
-then opens a document offscreen to check the bundle is whole before calling it done.
-Build it on the oldest distro you mean to support — glibc is the one thing an AppImage
-cannot bring along. Tagging `v*` runs the same script on Ubuntu 22.04 and attaches the
-result to a GitHub release.
+It's a Rust core over a Qt Quick UI via [cxx-qt](https://github.com/KDAB/cxx-qt),
+rendered by Qt's own `Text.MarkdownText`.
 
-## Run
-
-```sh
-blogawrite sample/post.md
-```
-
-The path is required — there is no file picker. A path that does not exist yet opens
-an empty document that the first save creates.
-
-## Using it
-
-How each block behaves while the cursor is in it:
-
-| Block | While you edit it |
-| --- | --- |
-| paragraph, list | stays rendered; `**`, `*`, `` ` ``, `~~` and `[…](…)` show only around the construct under the cursor |
-| fenced code | stays rendered, fences hidden until the cursor reaches the first or last line |
-| heading, quote, table, rule | opens up into raw markdown |
-| lone image | keeps the picture, with its `![…](…)` line underneath |
-
-| Key | Does |
-| --- | --- |
-| Ctrl+S | save |
-| Ctrl+B / Ctrl+I / Ctrl+U | wrap the selection in `**`, `*` or `~~`; again to unwrap |
-| Ctrl+Shift+L / Ctrl+Shift+I | `[…](…)` around the selection, or an empty pair; `!` prefixed for images |
-| PageUp / PageDown | a screenful, selecting the block at the far edge |
-| Up / Down | at the first or last line, move to the neighbouring block |
-| Backspace | at position 0, merge into the previous block |
-| Enter twice | end the block and start a new one |
-
-Closing with unsaved changes prompts at the foot of the window: `y` saves and closes,
-`n` discards, `esc` goes back. Cursor positions are remembered per file in
-`~/.local/state/blogawrite/cursors`.
-
-## Known limitations
-
-- **Blank-line runs collapse.** Three or more blank lines between blocks become one on
-  save. Block contents are preserved exactly.
-- **Undo is per block.** The TextEdit's own undo stack, reset when you leave a block.
-- **Images inside a paragraph do not show while you edit it.** A QTextDocument cannot
-  put a picture into text it does not own, so you get the alt text instead.
-- **Hidden markers are squeezed, not removed.** Qt cannot hide characters in an
-  editable document, so a marker is drawn in nothing at a hundredth of its width,
-  leaving a fraction of a pixel.
-- **One file per run.** No open, new or save-as.
+`packaging/build-appimage.sh` builds the AppImage: it packs the release binary with the
+Qt it needs — both the X11 and the Wayland platform plugins, so the qtwayland packages
+are needed to build it even if you only run X11 — then opens a document offscreen to
+check the bundle is whole. Build it on the oldest distro you mean to support; glibc is
+the one thing an AppImage cannot bring along. Tagging `v*` runs the same script on
+Ubuntu 22.04 and attaches the result to a release.
 
 ## License
 
