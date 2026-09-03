@@ -140,11 +140,18 @@ rm -rf "$appdir/usr/translations"
 # and JPEG XL encoders with kimageformats. Nothing here is dlopened behind ldd's
 # back: libproxy's backend, the one library that would be, names itself in DT_NEEDED.
 reachable=$work/reachable
+# Through an absolute path: ldd echoes back the directory it resolved through, so a
+# relative LD_LIBRARY_PATH comes back as a relative answer that the filter below —
+# and anything else comparing these to a library's own path — does not recognise.
+# Everything a plugin alone needs went out of the bundle that way. libQt6XcbQpa went
+# with it, leaving an xcb plugin that could only load against the host's own Qt.
+libs=$(realpath "$appdir/usr/lib")
 {
     ldd "$appdir/usr/bin/blogawrite"
     find "$appdir/usr/plugins" -name '*.so' \
-        -exec env LD_LIBRARY_PATH="$appdir/usr/lib" ldd {} \;
-} 2>/dev/null | awk '/=> \//{print $3}' | xargs -r -n64 realpath -m -- | sort -u > "$reachable"
+        -exec env LD_LIBRARY_PATH="$libs" ldd {} \;
+} 2>/dev/null | awk '$2 == "=>" && $3 ~ /\//{print $3}' \
+    | xargs -r -n64 realpath -m -- | sort -u > "$reachable"
 find "$appdir/usr/lib" -maxdepth 1 -type f | while read -r lib; do
     grep -qxF "$(realpath -m "$lib")" "$reachable" || rm -f "$lib"
 done
@@ -204,13 +211,31 @@ if [ $status -ne 0 ]; then
     cat "$smoke/qml-log" >&2
     exit 1
 fi
+# Offscreen draws into memory and opens no platform plugin worth the name, so nothing
+# so far has asked whether this bundle can put a window on an X server. Where there is
+# an Xvfb to hand, ask: xcb is what every X11 session gets, and its plugin drags in
+# half the bundle behind it.
+if command -v xvfb-run > /dev/null; then
+    set +e
+    timeout 20 xvfb-run -a env HOME=$repo/$smoke/home QT_QPA_PLATFORM=xcb \
+        "$output" "$smoke/post.md" > "$smoke/xcb-log" 2>&1
+    status=$?
+    set -e
+    if [ $status -ne 124 ]; then
+        echo "smoke test: the AppImage would not stay up under xcb (exit $status)" >&2
+        cat "$smoke/xcb-log" >&2
+        exit 1
+    fi
+fi
 
-# The build machine has no compositor to open a Wayland window on, and the run above
-# went to offscreen, so neither would notice the Wayland half of the bundle going
-# missing — which is how it came to be missing for the first two releases. Check it
-# is there instead, and that nothing it pulls in was left behind.
+# The build machine has no compositor to open a Wayland window on, and the offscreen
+# runs above open neither Wayland nor xcb, so none of them would notice half the
+# bundle going missing — which is how the Wayland half went missing for the first two
+# releases and the xcb half for the three after them. Check both are there instead,
+# and that nothing they pull in was left behind.
 wanted=(wayland-shell-integration/libxdg-shell.so
-        wayland-graphics-integration-client/libqt-plugin-wayland-egl.so)
+        wayland-graphics-integration-client/libqt-plugin-wayland-egl.so
+        platforms/libqxcb.so)
 for platform in ${wayland//;/ }; do
     wanted+=("platforms/$platform")
 done
@@ -228,9 +253,20 @@ for plugin in "${wanted[@]}"; do
         echo "smoke test: $plugin is not in the bundle" >&2
         exit 1
     fi
-    if LD_LIBRARY_PATH=$appdir/usr/lib ldd "$path" | grep -q 'not found'; then
+    deps=$(LD_LIBRARY_PATH=$libs ldd "$path")
+    if grep -q 'not found' <<<"$deps"; then
         echo "smoke test: $plugin is missing a library it needs" >&2
-        LD_LIBRARY_PATH=$appdir/usr/lib ldd "$path" | grep 'not found' >&2
+        grep 'not found' <<<"$deps" >&2
+        exit 1
+    fi
+    # Found is not the same as found here. A plugin that reaches a Qt library outside
+    # the bundle is running this Qt and the host's at once: it loads on the build
+    # machine, where the two are the same version, and on no machine where they differ.
+    stray=$(awk -v inside="$libs/" \
+        '$2 == "=>" && $3 ~ /\// && $1 ~ /^libQt6/ && index($3, inside) != 1 {print $3}' <<<"$deps")
+    if [ -n "$stray" ]; then
+        echo "smoke test: $plugin takes its Qt from outside the bundle" >&2
+        echo "$stray" >&2
         exit 1
     fi
 done
