@@ -70,8 +70,11 @@ Other keys:
 
 | Key | Does |
 | --- | --- |
-| PageUp / PageDown | a screenful, selecting the block at the far edge |
+| PageUp / PageDown | a screenful, leaving the cursor in the block at the far edge |
 | Up / Down | at the first or last line, move to the neighbouring block |
+| Shift+arrows | select; at a block's edge the selection carries on into the next one |
+| Ctrl+C | copy; a selection that spans blocks comes out as markdown |
+| Ctrl+Z | undo the last document change |
 | Backspace | at the start of a block, merge it into the one before |
 | Enter twice | end the block and start a new one |
 
@@ -82,7 +85,9 @@ discards, `esc` goes back.
 
 - Three or more blank lines between blocks collapse to one on save. Block contents are
   untouched.
-- Undo is per block — it resets when you leave one.
+- Deleting a selection that spans blocks joins what is left of its two ends into one
+  block, which keeps the first one's kind: half a quote pulled into a paragraph brings
+  its `>` along.
 - An image inside a paragraph shows its alt text while you edit that paragraph.
 - Hidden markers are squeezed rather than removed, so a marker leaves a fraction of a
   pixel behind.

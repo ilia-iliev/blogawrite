@@ -7,6 +7,8 @@ Item {
 
     property string source
     property url documentBase
+    // Covered whole by a selection: shown the way an editor shows one, ink for paper.
+    property bool selected: false
 
     // Carries where it was clicked, so the editor can put the cursor under the pointer.
     signal activated(point at)
@@ -21,7 +23,7 @@ Item {
         textFormat: Text.MarkdownText
         baseUrl: root.documentBase
         wrapMode: Text.WordWrap
-        color: Theme.text
+        color: root.selected ? Theme.background : Theme.text
         font.family: Theme.bodyFamily
         font.pixelSize: Theme.bodySize
         lineHeight: Theme.lineHeight

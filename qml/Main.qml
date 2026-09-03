@@ -46,15 +46,31 @@ Window {
             required property string kind
             required property string imagePath
 
-            readonly property bool editing: index === doc.activeIndex
+            readonly property bool cursorHere: index === doc.activeIndex
+            // The block with the cursor is an editor, and so is the one a selection
+            // running out of it is anchored in: that one has its own share of it to show.
+            readonly property bool editing: cursorHere || index === doc.selectionAnchor
+            // The far end of a selection running through this block, when there is one.
+            readonly property int otherEnd: index === doc.activeIndex ? doc.selectionAnchor
+                                                                     : doc.activeIndex
+            readonly property int selectionLast: Math.max(doc.selectionAnchor, doc.activeIndex)
+            readonly property bool selected: doc.selectionAnchor >= 0
+                && index >= Math.min(doc.selectionAnchor, doc.activeIndex)
+                && index <= selectionLast
+            // The blocks between the two ends are covered whole. They stay rendered
+            // rather than opening up: they have no partial share of the selection to show.
+            readonly property bool covered: selected && index !== doc.activeIndex
+                                                     && index !== doc.selectionAnchor
             // Where this block was last clicked, handed to the editor it opens.
             property point tapPoint: Qt.point(-1, -1)
 
             width: ListView.view.width
             height: column.height
 
-            onEditingChanged: {
-                if (!editing) {
+            // The click is spent as soon as the cursor is placed by it: a selection that
+            // comes back to this block afterwards must not land on it a second time.
+            onCursorHereChanged: {
+                if (!cursorHere) {
                     tapPoint = Qt.point(-1, -1)
                 }
             }
@@ -64,6 +80,27 @@ Window {
                 if (loader.item) {
                     loader.item.forceActiveFocus()
                 }
+            }
+
+            // A block the selection covers whole, behind it: the block itself swaps its
+            // ink for the paper colour to sit on this.
+            Rectangle {
+                visible: block.covered
+                x: column.x
+                width: column.width
+                height: block.height
+                color: Theme.text
+            }
+
+            // The gap to the next block, filled in when the selection runs on through
+            // it, so that a selection over several blocks reads as one.
+            Rectangle {
+                visible: block.selected && block.index < block.selectionLast
+                x: column.x
+                width: column.width
+                y: block.height
+                height: Theme.blockSpacing
+                color: Theme.text
             }
 
             Column {
@@ -95,6 +132,7 @@ Window {
                 id: renderedBlock
                 RenderedBlock {
                     source: block.rendered
+                    selected: block.covered
                     documentBase: doc.baseUrl
                     onActivated: (at) => {
                         block.tapPoint = at
@@ -117,12 +155,24 @@ Window {
                 ActiveBlock {
                     source: block.text
                     kind: block.kind
+                    current: block.cursorHere
+                    anchoredAt: block.index === doc.selectionAnchor ? doc.selectionPosition : -1
+                    beyond: doc.selectionAnchor < 0 ? ""
+                          : block.otherEnd > block.index ? "below"
+                          : block.otherEnd < block.index ? "above" : "here"
                     initialPosition: doc.pendingCursor
                     initialPoint: block.tapPoint
-                    onEdited: (body) => doc.setBlockText(block.index, body)
+                    onEdited: (body, cursor) => doc.setBlockText(block.index, body, cursor)
+                    onCursorMoved: (cursor) => doc.setCursorPosition(block.index, cursor)
+                    onUndoRequested: doc.undo()
                     onSplit: (before, after) => doc.splitBlock(block.index, before, after)
                     onMergeRequested: doc.mergeWithPrevious(block.index)
                     onLeave: (direction) => doc.activate(block.index + direction)
+                    onExtend: (direction, from) => doc.selectTo(block.index + direction, from)
+                    onCollapse: (at) => doc.clearSelection(at)
+                    onTapped: doc.activate(block.index)
+                    onCopyRequested: (at) => clipboard.take(doc.selectionText(at))
+                    onDeleteRequested: (at, insert) => doc.deleteSelection(at, insert)
                 }
             }
         }
@@ -267,6 +317,20 @@ Window {
         gradient: Gradient {
             GradientStop { position: 0.0; color: Qt.alpha(Theme.background, 0) }
             GradientStop { position: 1.0; color: Theme.background }
+        }
+    }
+
+    // Qt hands the clipboard to text items alone, so a selection that spans blocks is
+    // copied by way of one that exists for nothing else.
+    TextEdit {
+        id: clipboard
+
+        visible: false
+
+        function take(body) {
+            text = body
+            selectAll()
+            copy()
         }
     }
 

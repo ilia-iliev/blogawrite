@@ -5,6 +5,9 @@ import com.blogawrite.text
 // The block under the cursor. Prose is styled as it is written, with the markers shrunk
 // away; structure — headings, quotes, tables, rules — opens up into its raw markdown.
 //
+// The far end of a selection that runs across blocks is an editor like this one too, so
+// that it can show its share of the selection. That one holds neither cursor nor keyboard.
+//
 // A plain TextEdit, not Controls' TextArea, which is a TextEdit with a background and a
 // placeholder wrapped around it: every property this sets is one it overrides anyway, and
 // naming it would load the whole of QtQuick.Controls before the first frame.
@@ -17,6 +20,19 @@ TextEdit {
     // Where the block was clicked, so the cursor lands under the pointer. -1 for elsewhere.
     property point initialPoint: Qt.point(-1, -1)
 
+    // A selection running through this block: where the rest of it lies — "above",
+    // "below", "here" once it has come back inside this block, "" for none at all — and
+    // where it is pinned in here, -1 when it is pinned in another block.
+    property string beyond: ""
+    property int anchoredAt: -1
+    // Whether this is the block the cursor is in.
+    property bool current: true
+
+    readonly property bool spanning: beyond === "above" || beyond === "below"
+    // Where this block's own selection is pinned: the end of it the cursor is not at.
+    readonly property int ownAnchor: cursorPosition === selectionStart ? selectionEnd
+                                                                      : selectionStart
+
     // Styling the document counts as a change, so edits are only reported once the
     // block's own text is in place.
     property bool started: false
@@ -24,15 +40,24 @@ TextEdit {
     readonly property bool live: kind === "paragraph" || kind === "list"
     readonly property bool code: kind === "code"
 
-    signal edited(string body)
+    signal edited(string body, int cursor)
+    signal cursorMoved(int cursor)
+    signal undoRequested()
     signal split(string before, string after)
     signal mergeRequested()
     signal leave(int direction)
+    signal extend(int direction, int from)
+    signal collapse(int at)
+    signal tapped()
+    signal copyRequested(int at)
+    signal deleteRequested(int at, string insert)
 
     wrapMode: TextEdit.Wrap
     selectByMouse: true
     persistentSelection: true
     // Inverted ink rather than the stock blue, which fights the paper-coloured theme.
+    // The blocks a selection covers whole are given the same ink, so that a selection
+    // across several of them is all one colour.
     selectionColor: Theme.text
     selectedTextColor: Theme.background
     color: Theme.text
@@ -60,7 +85,8 @@ TextEdit {
     MarkdownHighlighter {
         // A raw block is left alone: its markup is the point of showing it.
         target: root.live || root.code ? root.textDocument : null
-        cursorPosition: root.cursorPosition
+        // Markers open up around the cursor, and there is none in a block it has left.
+        cursorPosition: root.current ? root.cursorPosition : -1
         code: root.code
         accent: Theme.accent
         muted: Theme.muted
@@ -70,13 +96,63 @@ TextEdit {
         lineHeight: Theme.lineHeight
     }
 
+    // A click brings the cursor here, and with it the end of any selection that ran
+    // past this block.
+    TapHandler {
+        onTapped: root.tapped()
+    }
+
     Component.onCompleted: {
         text = source
         started = true
-        place()
-        // The loader sizes the editor only after it is built, so the click lands properly
-        // on the second go; on the very first block the window is not up for focus either.
-        Qt.callLater(place)
+        if (current) {
+            place()
+            settle.start()
+        } else {
+            showSelection()
+        }
+    }
+
+    // The loader sizes the editor only after it is built, so the click lands properly on
+    // the second go; on the very first block the window is not up for focus either. A
+    // timer rather than Qt.callLater, which would fire into a block already gone.
+    Timer {
+        id: settle
+
+        interval: 0
+        onTriggered: {
+            if (root.current) {
+                root.place()
+            }
+        }
+    }
+
+    // The model rewrites this block under the editor when a selection is deleted across it.
+    onSourceChanged: {
+        if (started && text !== source) {
+            text = source
+            cursorPosition = initialPosition < 0 ? length : Math.min(initialPosition, length)
+        }
+    }
+
+    onCurrentChanged: {
+        if (!current) {
+            showSelection()
+        } else if (!activeFocus) {
+            // The cursor has come back to this block from another one. A click brings it
+            // back too, and has already put it where it belongs.
+            place()
+        }
+    }
+
+    onBeyondChanged: {
+        if (beyond !== "") {
+            showSelection()
+        } else if (!current) {
+            // A selection let go leaves nothing behind in the block it ran into. The
+            // one with the cursor keeps its own, which the editor sees to from here.
+            deselect()
+        }
     }
 
     // Put the cursor where the block was clicked, or where the last block left it.
@@ -85,7 +161,20 @@ TextEdit {
             ? positionAt(initialPoint.x, initialPoint.y)
             : initialPosition < 0 ? length : Math.min(initialPosition, length)
         cursorPosition = code ? insideFences(at) : at
+        showSelection()
         forceActiveFocus()
+    }
+
+    // This block's share of a selection: from where the selection is pinned — in here, or
+    // at the edge it comes in by — to the cursor, or to the edge it leaves by.
+    function showSelection() {
+        if (beyond === "") {
+            return
+        }
+        const pinned = anchoredAt >= 0 ? Math.min(anchoredAt, length)
+                     : beyond === "above" ? 0 : length
+        const far = current ? cursorPosition : (beyond === "above" ? 0 : length)
+        select(pinned, far)
     }
 
     // Qt lays a rendered code block out with margins the raw text has not, so a click on it
@@ -99,9 +188,15 @@ TextEdit {
         return last >= first && first > 0 ? Math.min(Math.max(position, first), last) : position
     }
 
+    onCursorPositionChanged: {
+        if (started && current) {
+            root.cursorMoved(cursorPosition)
+        }
+    }
+
     onTextChanged: {
         if (started) {
-            root.edited(text)
+            root.edited(text, cursorPosition)
         }
     }
 
@@ -153,8 +248,72 @@ TextEdit {
                                        : end + prefix.length + 3
     }
 
-    Keys.onPressed: (event) => {
+    // The keys that go on moving the far end of a selection rather than ending it: the
+    // cursor keys, with shift. Within this block the editor moves it itself.
+    function movesSelection(event) {
+        if (!(event.modifiers & Qt.ShiftModifier)) {
+            return false
+        }
         switch (event.key) {
+        case Qt.Key_Up:
+        case Qt.Key_Down:
+        case Qt.Key_Left:
+        case Qt.Key_Right:
+        case Qt.Key_Home:
+        case Qt.Key_End:
+            return true
+        }
+        return false
+    }
+
+    // What a selection that runs past this block answers itself. Everything else ends it
+    // and then does its usual job.
+    function takesSelection(event) {
+        switch (event.key) {
+        case Qt.Key_C:
+            if (event.modifiers === Qt.ControlModifier) {
+                root.copyRequested(cursorPosition)
+                return true
+            }
+            return false
+        case Qt.Key_Backspace:
+        case Qt.Key_Delete:
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+            root.deleteRequested(cursorPosition, "")
+            return true
+        case Qt.Key_Shift:
+        case Qt.Key_Control:
+            // A modifier on its own is the start of one of these, not the end of them.
+            return true
+        }
+        // Anything typed replaces the selection, as it does in any editor.
+        if (event.text.length > 0 && event.text.charCodeAt(0) >= 0x20
+                && !(event.modifiers & Qt.ControlModifier)) {
+            root.deleteRequested(cursorPosition, event.text)
+            return true
+        }
+        return false
+    }
+
+    Keys.onPressed: (event) => {
+        // A selection that is running answers some keys itself, the cursor keys carry
+        // on moving it, and everything else lets it go before doing its usual job.
+        if (beyond !== "" && !movesSelection(event)) {
+            if (spanning && takesSelection(event)) {
+                event.accepted = true
+                return
+            }
+            root.collapse(cursorPosition)
+        }
+
+        switch (event.key) {
+        case Qt.Key_Z:
+            if (event.modifiers === Qt.ControlModifier) {
+                event.accepted = true
+                root.undoRequested()
+            }
+            break
         case Qt.Key_Backspace:
             if (cursorPosition === 0 && selectedText.length === 0) {
                 event.accepted = true
@@ -162,15 +321,30 @@ TextEdit {
             }
             break
         case Qt.Key_Up:
-            if (cursorRectangle.y <= positionToRectangle(0).y) {
+        case Qt.Key_Down:
+            let direction = event.key === Qt.Key_Down ? 1 : -1
+            let atEdge = direction > 0
+                ? cursorRectangle.y >= positionToRectangle(length).y
+                : cursorRectangle.y <= positionToRectangle(0).y
+            if (atEdge) {
                 event.accepted = true
-                root.leave(-1)
+                // Shift at the edge carries the selection on into the next block instead
+                // of stopping at this one's.
+                if (event.modifiers & Qt.ShiftModifier) {
+                    root.extend(direction, ownAnchor)
+                } else {
+                    root.leave(direction)
+                }
             }
             break
-        case Qt.Key_Down:
-            if (cursorRectangle.y >= positionToRectangle(length).y) {
+        case Qt.Key_Left:
+        case Qt.Key_Right:
+            // Only with shift: the plain arrows have always stopped at a block's ends.
+            let step = event.key === Qt.Key_Right ? 1 : -1
+            if ((event.modifiers & Qt.ShiftModifier)
+                    && cursorPosition === (step > 0 ? length : 0)) {
                 event.accepted = true
-                root.leave(1)
+                root.extend(step, ownAnchor)
             }
             break
         case Qt.Key_B:
