@@ -140,15 +140,17 @@ rm -rf "$appdir/usr/translations"
 # and JPEG XL encoders with kimageformats. Nothing here is dlopened behind ldd's
 # back: libproxy's backend, the one library that would be, names itself in DT_NEEDED.
 reachable=$work/reachable
-# Through an absolute path: ldd echoes back the directory it resolved through, so a
-# relative LD_LIBRARY_PATH comes back as a relative answer that the filter below —
-# and anything else comparing these to a library's own path — does not recognise.
-# Everything a plugin alone needs went out of the bundle that way. libQt6XcbQpa went
-# with it, leaving an xcb plugin that could only load against the host's own Qt.
+# Through an absolute path, and over the QML tree as well as the plugin one. ldd
+# echoes back the directory it resolved through, so a relative LD_LIBRARY_PATH comes
+# back as a relative answer that the filter below does not recognise; and a QML module
+# is a plugin with a library behind it like any other. Everything reached only one of
+# those two ways went out of the bundle after being deployed: libQt6XcbQpa with the
+# xcb plugin still there to want it, libQt6QmlWorkerScript with QtQml.WorkerScript —
+# each leaving behind a plugin that could only load against the host's own Qt.
 libs=$(realpath "$appdir/usr/lib")
 {
     ldd "$appdir/usr/bin/blogawrite"
-    find "$appdir/usr/plugins" -name '*.so' \
+    find "$appdir/usr/plugins" "$appdir/usr/qml" -name '*.so' \
         -exec env LD_LIBRARY_PATH="$libs" ldd {} \;
 } 2>/dev/null | awk '$2 == "=>" && $3 ~ /\//{print $3}' \
     | xargs -r -n64 realpath -m -- | sort -u > "$reachable"
@@ -214,15 +216,16 @@ fi
 # Offscreen draws into memory and opens no platform plugin worth the name, so nothing
 # so far has asked whether this bundle can put a window on an X server. Where there is
 # an Xvfb to hand, ask: xcb is what every X11 session gets, and its plugin drags in
-# half the bundle behind it.
+# half the bundle behind it. Hand it the directory again rather than the document, so
+# that a QML engine which never came up fails here too instead of sitting there.
 if command -v xvfb-run > /dev/null; then
     set +e
     timeout 20 xvfb-run -a env HOME=$repo/$smoke/home QT_QPA_PLATFORM=xcb \
-        "$output" "$smoke/post.md" > "$smoke/xcb-log" 2>&1
+        "$output" "$smoke/home" > "$smoke/xcb-log" 2>&1
     status=$?
     set -e
-    if [ $status -ne 124 ]; then
-        echo "smoke test: the AppImage would not stay up under xcb (exit $status)" >&2
+    if [ $status -ne 0 ]; then
+        echo "smoke test: under xcb, Main.qml never got as far as refusing a directory (exit $status)" >&2
         cat "$smoke/xcb-log" >&2
         exit 1
     fi
@@ -248,27 +251,40 @@ for lib in "$appdir"/usr/lib/libxkbcommon*; do
 done
 
 for plugin in "${wanted[@]}"; do
-    path=$appdir/usr/plugins/$plugin
-    if [ ! -f "$path" ]; then
+    if [ ! -f "$appdir/usr/plugins/$plugin" ]; then
         echo "smoke test: $plugin is not in the bundle" >&2
         exit 1
     fi
-    deps=$(LD_LIBRARY_PATH=$libs ldd "$path")
-    if grep -q 'not found' <<<"$deps"; then
-        echo "smoke test: $plugin is missing a library it needs" >&2
-        grep 'not found' <<<"$deps" >&2
-        exit 1
-    fi
-    # Found is not the same as found here. A plugin that reaches a Qt library outside
-    # the bundle is running this Qt and the host's at once: it loads on the build
-    # machine, where the two are the same version, and on no machine where they differ.
-    stray=$(awk -v inside="$libs/" \
-        '$2 == "=>" && $3 ~ /\// && $1 ~ /^libQt6/ && index($3, inside) != 1 {print $3}' <<<"$deps")
-    if [ -n "$stray" ]; then
-        echo "smoke test: $plugin takes its Qt from outside the bundle" >&2
-        echo "$stray" >&2
-        exit 1
-    fi
 done
+
+# Now every plugin in the bundle, QML modules included, against the two ways one can
+# be there and still not load. Missing outright is the first. The second is subtler:
+# found is not the same as found here, and a plugin that reaches a Qt library outside
+# the bundle is running this Qt and the host's in one process — which works on the
+# build machine, where the two are the same version, and on no machine where they are
+# not. Both halves of the bundle have gone out that way, xcb and QtQml.WorkerScript.
+missing=$work/missing
+stray=$work/stray
+: > "$missing"
+: > "$stray"
+find "$appdir/usr/plugins" "$appdir/usr/qml" -name '*.so' | while read -r plugin; do
+    deps=$(LD_LIBRARY_PATH=$libs ldd "$plugin" 2>/dev/null)
+    # `|| true`: a plugin with nothing missing is the good case, and grep says 1 to it.
+    grep 'not found' <<<"$deps" | sed "s|^|${plugin#"$appdir/"}: |" >> "$missing" || true
+    awk -v inside="$libs/" -v name="${plugin#"$appdir/"}" \
+        '$2 == "=>" && $3 ~ /\// && $1 ~ /^libQt6/ && index($3, inside) != 1 {print name ": " $1 " => " $3}' \
+        <<<"$deps" >> "$stray"
+done
+
+if [ -s "$missing" ]; then
+    echo "smoke test: a plugin is missing a library it needs" >&2
+    cat "$missing" >&2
+    exit 1
+fi
+if [ -s "$stray" ]; then
+    echo "smoke test: a plugin takes its Qt from outside the bundle" >&2
+    sort -u "$stray" >&2
+    exit 1
+fi
 
 echo "built $output"
