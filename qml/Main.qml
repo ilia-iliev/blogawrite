@@ -247,7 +247,8 @@ Window {
             name: "scrolling"
             when: linger.running
             PropertyChanges {
-                scrollBar.opacity: 0.4
+                target: scrollBar
+                opacity: 0.4
             }
         }
 
