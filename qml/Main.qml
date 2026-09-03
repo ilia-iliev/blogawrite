@@ -167,7 +167,7 @@ Window {
                     onUndoRequested: doc.undo()
                     onSplit: (before, after) => doc.splitBlock(block.index, before, after)
                     onMergeRequested: doc.mergeWithPrevious(block.index)
-                    onLeave: (direction) => doc.activate(block.index + direction)
+                    onLeave: (direction) => doc.moveTo(block.index + direction, direction)
                     onExtend: (direction, from) => doc.selectTo(block.index + direction, from)
                     onCollapse: (at) => doc.clearSelection(at)
                     onTapped: doc.activate(block.index)

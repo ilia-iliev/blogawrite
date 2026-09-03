@@ -64,6 +64,9 @@ pub mod qobject {
         /// Commit the block being edited and move the cursor to `target`.
         #[qinvokable]
         fn activate(self: Pin<&mut Document>, target: i32);
+        /// Move into the neighbouring block from `direction`, keeping to its near edge.
+        #[qinvokable]
+        fn move_to(self: Pin<&mut Document>, target: i32, direction: i32);
         /// Carry a selection into block `target`, starting one at `anchor_position` in the
         /// block the cursor is leaving if there is none yet.
         #[qinvokable]
@@ -218,7 +221,15 @@ impl Document {
 }
 
 impl Document {
-    fn activate(mut self: Pin<&mut Self>, target: i32) {
+    fn activate(self: Pin<&mut Self>, target: i32) {
+        self.activate_at(target, -1);
+    }
+
+    fn move_to(self: Pin<&mut Self>, target: i32, direction: i32) {
+        self.activate_at(target, if direction > 0 { 0 } else { -1 });
+    }
+
+    fn activate_at(mut self: Pin<&mut Self>, target: i32, cursor: i32) {
         self.as_mut().set_selection_anchor(-1);
         let previous = *self.active_index();
         let mut target = target;
@@ -230,9 +241,9 @@ impl Document {
         }
         // There is always a cursor somewhere: the ends of the document just hold it.
         let last = self.blocks.len() as i32 - 1;
-        self.as_mut().set_pending_cursor(-1);
+        self.as_mut().set_pending_cursor(cursor);
         self.as_mut().set_active_index(target.clamp(0, last));
-        self.as_mut().refresh_undo(-1);
+        self.as_mut().refresh_undo(cursor);
     }
 
     fn select_to(mut self: Pin<&mut Self>, target: i32, anchor_position: i32) {
