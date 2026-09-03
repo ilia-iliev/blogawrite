@@ -322,26 +322,28 @@ Window {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             height: prompt.height + 24
-            color: Theme.activeBackground
-            border.color: Theme.border
+            color: Theme.promptBackground
 
-            Row {
+            // Two centred lines: the question, then the keys that answer it.
+            Column {
                 id: prompt
 
-                x: 12
+                anchors.horizontalCenter: parent.horizontalCenter
                 y: 12
-                spacing: 16
+                spacing: 4
 
                 Text {
-                    text: qsTr("Save changes to %1?").arg(window.fileName)
-                    color: Theme.text
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: qsTr("Save changes?")
+                    color: Theme.promptText
                     font.family: Theme.monoFamily
                     font.pixelSize: Theme.bodySize
                 }
 
                 Text {
-                    text: qsTr("[y] save   [n] discard   [esc] cancel")
-                    color: Theme.muted
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: qsTr("[y] [n] [esc]")
+                    color: Theme.promptText
                     font.family: Theme.monoFamily
                     font.pixelSize: Theme.bodySize
                 }

@@ -21,6 +21,8 @@ pub mod qobject {
         #[qproperty(QString, code_background)]
         #[qproperty(QString, active_background)]
         #[qproperty(QString, border)]
+        #[qproperty(QString, prompt_background)]
+        #[qproperty(QString, prompt_text)]
         #[qproperty(QString, mono_family)]
         #[qproperty(QString, body_family)]
         #[qproperty(i32, content_width)]
@@ -41,6 +43,8 @@ pub struct ThemeRust {
     code_background: QString,
     active_background: QString,
     border: QString,
+    prompt_background: QString,
+    prompt_text: QString,
     mono_family: QString,
     body_family: QString,
     content_width: i32,
@@ -61,6 +65,8 @@ impl Default for ThemeRust {
             code_background: QString::from("#F0EEE9"),
             active_background: QString::from("#F3F1EA"),
             border: QString::from("#E4E0D6"),
+            prompt_background: QString::from("#26241F"),
+            prompt_text: QString::from("#FFFFFF"),
             mono_family: QString::from("monospace"),
             body_family: QString::from("sans-serif"),
             content_width: 720,
