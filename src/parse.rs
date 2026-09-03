@@ -89,6 +89,29 @@ pub fn lone_image(block: &str) -> Option<String> {
     path
 }
 
+/// The markdown to render for a block. Qt folds the newlines a writer typed into
+/// spaces, so in the blocks where a newline is a line break, make them hard ones.
+pub fn rendered(block: &str) -> String {
+    if !matches!(kind(block), "paragraph" | "quote" | "list") {
+        return block.to_string();
+    }
+
+    let mut out = String::with_capacity(block.len());
+    let mut lines = block.lines().peekable();
+    while let Some(line) = lines.next() {
+        out.push_str(line);
+        let Some(next) = lines.peek() else { break };
+        // Two trailing spaces are markdown's hard break. A line that already breaks, or
+        // that ends its paragraph anyway, needs none.
+        if !(line.trim().is_empty() || next.trim().is_empty()
+            || line.ends_with("  ") || line.ends_with('\\')) {
+            out.push_str("  ");
+        }
+        out.push('\n');
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,5 +195,26 @@ mod tests {
         assert_eq!(lone_image("text ![alt](pic.png) more"), None);
         assert_eq!(lone_image("# heading"), None);
         assert_eq!(lone_image("![a](1.png) ![b](2.png)"), None);
+    }
+
+    #[test]
+    fn hardens_the_line_breaks_a_writer_typed() {
+        assert_eq!(rendered("TITLE: t\nAUTHOR: a"), "TITLE: t  \nAUTHOR: a");
+        assert_eq!(rendered("> one\n> two"), "> one  \n> two");
+        assert_eq!(rendered("- one\n- two"), "- one  \n- two");
+        assert_eq!(rendered("alone"), "alone");
+    }
+
+    #[test]
+    fn leaves_breaks_that_are_already_there() {
+        assert_eq!(rendered("one  \ntwo\\\nthree"), "one  \ntwo\\\nthree");
+        assert_eq!(rendered("- one\n\n- two"), "- one\n\n- two");
+    }
+
+    #[test]
+    fn leaves_blocks_whose_newlines_are_structure() {
+        for block in ["```\ncode\n  here\n```", "| a |\n| - |\n| 1 |", "Title\n====="] {
+            assert_eq!(rendered(block), block);
+        }
     }
 }

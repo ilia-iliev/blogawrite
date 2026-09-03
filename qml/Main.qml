@@ -42,6 +42,7 @@ Window {
 
             required property int index
             required property string text
+            required property string rendered
             required property string kind
             required property string imagePath
 
@@ -93,7 +94,7 @@ Window {
             Component {
                 id: renderedBlock
                 RenderedBlock {
-                    source: block.text
+                    source: block.rendered
                     documentBase: doc.baseUrl
                     onActivated: (at) => {
                         block.tapPoint = at

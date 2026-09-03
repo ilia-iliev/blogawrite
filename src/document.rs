@@ -10,6 +10,7 @@ use std::pin::Pin;
 const TEXT_ROLE: i32 = 0x0100; // Qt::UserRole
 const KIND_ROLE: i32 = 0x0101;
 const IMAGE_PATH_ROLE: i32 = 0x0102;
+const RENDERED_ROLE: i32 = 0x0103;
 
 #[cxx_qt::bridge]
 pub mod qobject {
@@ -142,6 +143,7 @@ impl Document {
         };
         match role {
             TEXT_ROLE => QVariant::from(&QString::from(block)),
+            RENDERED_ROLE => QVariant::from(&QString::from(&parse::rendered(block))),
             KIND_ROLE => QVariant::from(&QString::from(parse::kind(block))),
             IMAGE_PATH_ROLE => {
                 QVariant::from(&QString::from(&parse::lone_image(block).unwrap_or_default()))
@@ -155,6 +157,7 @@ impl Document {
         roles.insert(TEXT_ROLE, QByteArray::from("text"));
         roles.insert(KIND_ROLE, QByteArray::from("kind"));
         roles.insert(IMAGE_PATH_ROLE, QByteArray::from("imagePath"));
+        roles.insert(RENDERED_ROLE, QByteArray::from("rendered"));
         roles
     }
 }
