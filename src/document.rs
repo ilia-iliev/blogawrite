@@ -435,14 +435,16 @@ impl Document {
             undo.pop();
             undo.last().expect("undo history has an initial snapshot").clone()
         };
-        self.as_mut().begin_reset_model();
-        self.as_mut().rust_mut().blocks = state.blocks;
-        self.as_mut().end_reset_model();
+        // Delegates are made while the model reset is processed, so put their initial
+        // cursor state in place first. Setting it afterwards leaves a new editor at zero.
         self.as_mut().set_selection_anchor(state.selection_anchor);
         self.as_mut().set_selection_position(state.selection_position);
         self.as_mut().set_pending_cursor(state.cursor_position);
         self.as_mut().set_dirty(state.dirty);
-        self.set_active_index(state.active_index);
+        self.as_mut().set_active_index(state.active_index);
+        self.as_mut().begin_reset_model();
+        self.as_mut().rust_mut().blocks = state.blocks;
+        self.as_mut().end_reset_model();
     }
 
     fn notify_changed(mut self: Pin<&mut Self>, index: i32) {
