@@ -1,202 +1,70 @@
 #include "markdownhighlighter.h"
 
-#include <QtCore/QVarLengthArray>
+#include "renderedhighlighter.h"
+
+#include "blogawrite/src/style.cxx.h"
+
 #include <QtGui/QTextBlock>
-#include <QtGui/QTextCursor>
 #include <QtGui/QTextDocument>
 #include <QtQml/qqml.h>
 
 namespace {
 
-enum Bits : quint16 {
-    Bold = 1 << 0,
-    Italic = 1 << 1,
-    Code = 1 << 2,
-    Strike = 1 << 3,
-    Link = 1 << 4,
-    Marker = 1 << 5,
-    Hidden = 1 << 6,
-};
+using blogawrite::StyleBit;
 
-void mark(QList<quint16> &mask, int from, int to, quint16 bits)
+constexpr quint16 bit(StyleBit style)
 {
-    for (int i = qMax(from, 0); i < qMin(to, int(mask.size())); ++i) {
-        mask[i] |= bits;
-    }
+    return quint16(style);
 }
 
-/// One star is italic, two is bold, three is both; a pair of tildes is a strikeout.
-quint16 emphasisBits(QChar ch, int run)
+/// What each character of `text` is part of, worked out by the same markdown parser that
+/// splits the document into blocks. One entry per UTF-16 unit, which is how a QString
+/// counts, so it lines up with document positions as they are.
+QList<quint16> styleMask(const QString &text, int cursor, bool code)
 {
-    if (ch == '~') {
-        return Strike;
-    }
-    if (run >= 3) {
-        return Bold | Italic;
-    }
-    return run == 1 ? Italic : Bold;
-}
+    const QByteArray utf8 = text.toUtf8();
+    const rust::Vec<quint16> found = blogawrite::style_mask(
+        rust::Str(utf8.constData(), size_t(utf8.size())), cursor, code);
 
-int runLength(const QString &text, int at, QChar ch, int to)
-{
-    int run = 0;
-    while (at + run < to && text.at(at + run) == ch) {
-        ++run;
+    QList<quint16> mask;
+    mask.reserve(qsizetype(found.size()));
+    for (const quint16 bits : found) {
+        mask.append(bits);
     }
-    return run;
-}
-
-/// The start of the run of `len` `ch`s that closes a span opened before `from`, or -1.
-int closingRun(const QString &text, int from, QChar ch, int len, int to)
-{
-    for (int i = from; i < to; ++i) {
-        if (text.at(i) != ch || runLength(text, i, ch, to) < len) {
-            continue;
-        }
-        // `a ** b` is a pair of stars, not an empty bold run.
-        if (i == from || text.at(i - 1).isSpace()) {
-            continue;
-        }
-        return i;
-    }
-    return -1;
-}
-
-/// The end of a `[text](url)` opening at `open`, with the label ending at `label`, or -1.
-int closingLink(const QString &text, int open, int to, int &label)
-{
-    int depth = 0;
-    int i = open;
-    for (; i < to; ++i) {
-        if (text.at(i) == '[') {
-            ++depth;
-        } else if (text.at(i) == ']' && --depth == 0) {
-            break;
-        }
-    }
-    if (i + 1 >= to || text.at(i + 1) != '(') {
-        return -1;
-    }
-    label = i;
-
-    depth = 0;
-    for (int j = i + 1; j < to; ++j) {
-        if (text.at(j) == '(') {
-            ++depth;
-        } else if (text.at(j) == ')' && --depth == 0) {
-            return j + 1;
-        }
-    }
-    return -1;
-}
-
-/// Walk the inline markup in [from, to), recording what each character is part of.
-void scan(const QString &text, int from, int to, quint16 inherited, QList<quint16> &mask, int cursor)
-{
-    int i = from;
-    while (i < to) {
-        const QChar ch = text.at(i);
-        int end = -1;
-        int open = 0;
-        int close = 0;
-        quint16 bits = 0;
-        bool nested = true;
-
-        if (ch == '`') {
-            const int run = runLength(text, i, ch, to);
-            const int at = closingRun(text, i + run, ch, run, to);
-            if (at > 0) {
-                open = close = run;
-                end = at + run;
-                bits = Code;
-                nested = false;
-            }
-        } else if (ch == '[' || (ch == '!' && i + 1 < to && text.at(i + 1) == '[')) {
-            const int bracket = ch == '!' ? i + 1 : i;
-            int label = -1;
-            const int at = closingLink(text, bracket, to, label);
-            if (at > 0 && label > bracket + 1) {
-                open = bracket - i + 1;
-                close = at - label;
-                end = at;
-                bits = Link;
-            }
-        } else if (ch == '*' || ch == '_' || ch == '~') {
-            int run = qMin(runLength(text, i, ch, to), 3);
-            if (ch == '~') {
-                run = run >= 2 ? 2 : 0;
-            }
-            // Underscores inside a word are part of the word: `snake_case_name`.
-            const bool boundary = ch != '_' || i == 0 || !text.at(i - 1).isLetterOrNumber();
-            if (run > 0 && boundary && i + run < to && !text.at(i + run).isSpace()) {
-                const int at = closingRun(text, i + run, ch, run, to);
-                if (at > 0) {
-                    open = close = run;
-                    end = at + run;
-                    bits = emphasisBits(ch, run);
-                }
-            }
-        }
-
-        if (end < 0) {
-            mask[i] |= inherited;
-            ++i;
-            continue;
-        }
-
-        mark(mask, i, end, inherited | bits);
-        // Markers stay legible while the cursor is inside the span they belong to.
-        const quint16 marker = cursor >= i && cursor <= end ? Marker : Hidden;
-        mark(mask, i, i + open, marker);
-        mark(mask, end - close, end, marker);
-        if (nested) {
-            scan(text, i + open, end - close, inherited | bits, mask, cursor);
-        }
-        i = end;
-    }
+    return mask;
 }
 
 } // namespace
 
 MarkdownHighlighter::MarkdownHighlighter(QObject *parent)
-    : QSyntaxHighlighter(parent)
+    : BlockHighlighter(parent)
 {
 }
 
-void MarkdownHighlighter::setTarget(QQuickTextDocument *target)
+void MarkdownHighlighter::contentChanged()
 {
-    if (m_target == target) {
-        return;
-    }
-    m_target = target;
-    QTextDocument *doc = target ? target->textDocument() : nullptr;
-    if (doc) {
-        // The default margin would inset the text from where its rendered self sat.
-        doc->setDocumentMargin(0);
-    }
-    setDocument(doc);
-    if (doc) {
-        // Queued: the spacing is applied by editing the document, which a document must
-        // never be asked to do while it is still delivering a change of its own.
-        connect(doc,
-                &QTextDocument::contentsChanged,
-                this,
-                &MarkdownHighlighter::applyLineHeight,
-                Qt::QueuedConnection);
-        applyLineHeight();
-    }
-    Q_EMIT targetChanged();
+    m_maskDirty = true;
+    BlockHighlighter::contentChanged();
 }
 
 void MarkdownHighlighter::setCursorPosition(int position)
 {
-    const int previous = m_cursorPosition;
-    if (previous == position) {
+    if (m_cursorPosition == position) {
         return;
     }
     m_cursorPosition = position;
-    restyleCursorLines(previous, position);
+    restyleChangedLines();
     Q_EMIT cursorPositionChanged();
+}
+
+void MarkdownHighlighter::setSettled(bool settled)
+{
+    if (m_settled == settled) {
+        return;
+    }
+    m_settled = settled;
+    restyle();
+    Q_EMIT settledChanged();
 }
 
 void MarkdownHighlighter::setCode(bool code)
@@ -205,6 +73,7 @@ void MarkdownHighlighter::setCode(bool code)
         return;
     }
     m_code = code;
+    m_maskDirty = true;
     restyle();
     Q_EMIT codeChanged();
 }
@@ -239,154 +108,71 @@ void MarkdownHighlighter::setCodeBackground(const QColor &color)
     Q_EMIT codeBackgroundChanged();
 }
 
-void MarkdownHighlighter::setMonoFamily(const QString &family)
+const QList<quint16> &MarkdownHighlighter::mask()
 {
-    if (m_monoFamily == family) {
-        return;
+    if (m_maskDirty) {
+        QTextDocument *doc = document();
+        m_mask = doc ? styleMask(doc->toPlainText(), m_cursorPosition, m_code) : QList<quint16>();
+        m_maskDirty = false;
     }
-    m_monoFamily = family;
-    restyle();
-    Q_EMIT monoFamilyChanged();
+    return m_mask;
 }
 
-void MarkdownHighlighter::setCodeSize(int size)
-{
-    if (m_codeSize == size) {
-        return;
-    }
-    m_codeSize = size;
-    restyle();
-    Q_EMIT codeSizeChanged();
-}
-
-void MarkdownHighlighter::setLineHeight(qreal height)
-{
-    if (qFuzzyCompare(m_lineHeight, height)) {
-        return;
-    }
-    m_lineHeight = height;
-    applyLineHeight();
-    Q_EMIT lineHeightChanged();
-}
-
-/// Re-style, then take in the lines that just opened up or collapsed.
-void MarkdownHighlighter::restyle()
-{
-    rehighlight();
-    applyLineHeight();
-}
-
-/// A moved cursor only changes the lines it left and arrived at, so re-style those rather
-/// than the whole block — on a long one, rehighlighting all of it costs a keystroke dearly.
-/// Code is the exception: its fences open and close with the cursor anywhere inside.
-void MarkdownHighlighter::restyleCursorLines(int from, int to)
+/// A moved cursor opens and shuts the markers around it and leaves the rest of the block
+/// exactly as it was, so re-style only the lines whose marks actually changed —
+/// rehighlighting a long block on every keystroke costs it dearly. A span that runs over
+/// a line break is two lines, and this finds both.
+void MarkdownHighlighter::restyleChangedLines()
 {
     QTextDocument *doc = document();
     if (!doc) {
         return;
     }
-    QVarLengthArray<QTextBlock, 4> lines;
-    const auto add = [&lines](const QTextBlock &line) {
-        if (!line.isValid()) {
-            return;
-        }
-        for (const QTextBlock &seen : lines) {
-            if (seen.blockNumber() == line.blockNumber()) {
-                return;
-            }
-        }
-        lines.append(line);
-    };
-    add(doc->findBlock(from));
-    add(doc->findBlock(to));
-    if (m_code) {
-        add(doc->firstBlock());
-        add(doc->lastBlock());
-    }
+    const QList<quint16> before = mask();
+    m_maskDirty = true;
+    const QList<quint16> after = mask();
 
-    for (const QTextBlock &line : lines) {
-        rehighlightBlock(line);
+    for (QTextBlock line = doc->begin(); line.isValid(); line = line.next()) {
+        // A QTextBlock's length counts the separator that ends it; its text does not.
+        const int length = line.length() - 1;
+        if (before.mid(line.position(), length) != after.mid(line.position(), length)) {
+            rehighlightBlock(line);
+        }
     }
     applyLineHeight();
 }
 
 void MarkdownHighlighter::highlightBlock(const QString &text)
 {
-    QList<quint16> mask(text.size(), 0);
-    if (m_code) {
-        markCode(text, mask);
-    } else {
-        const int base = currentBlock().position();
-        markProse(text, mask, m_cursorPosition < 0 ? -1 : m_cursorPosition - base);
+    const QList<quint16> &whole = mask();
+    const int base = currentBlock().position();
+    QList<quint16> line(text.size(), 0);
+    for (int i = 0; i < text.size() && base + i < whole.size(); ++i) {
+        line[i] = whole[base + i];
+    }
+
+    // Only once the typing has stopped: marking a word the moment it is half-written
+    // would put a wash under nearly every word on its way in. A fenced block is code
+    // from end to end, and there is nothing in it for the checker to have a view on.
+    if (!m_code && m_settled) {
+        markLints(line);
     }
 
     // A line that is nothing but hidden markers — a code fence — takes up no height. That
     // is a block format, which only the spacing pass may set.
-    bool collapsed = !mask.isEmpty();
-    for (const quint16 bits : mask) {
-        collapsed = collapsed && (bits & Hidden);
+    bool collapsed = !line.isEmpty();
+    for (const quint16 bits : line) {
+        collapsed = collapsed && (bits & bit(StyleBit::Hidden));
     }
-    setCurrentBlockState(collapsed ? 1 : 0);
+    setCurrentBlockState(collapsed ? Collapsed : 0);
 
-    for (int start = 0; start < mask.size();) {
-        int end = start + 1;
-        while (end < mask.size() && mask[end] == mask[start]) {
-            ++end;
-        }
-        if (mask[start] != 0) {
-            setFormat(start, end - start, formatFor(mask[start]));
-        }
-        start = end;
-    }
-}
-
-/// Inside a fenced code block only the fences themselves are markup.
-void MarkdownHighlighter::markCode(const QString &text, QList<quint16> &mask) const
-{
-    const int last = document()->blockCount() - 1;
-    const int line = currentBlock().blockNumber();
-    const QString trimmed = text.trimmed();
-    if ((line != 0 && line != last) || !(trimmed.startsWith("```") || trimmed.startsWith("~~~"))) {
-        return;
-    }
-    // The block opens up again as soon as the cursor reaches either end of it.
-    const int at = m_cursorPosition < 0 ? -1 : document()->findBlock(m_cursorPosition).blockNumber();
-    const bool open = at == 0 || at == last;
-    mark(mask, 0, text.size(), open ? Marker : Hidden);
-}
-
-void MarkdownHighlighter::markProse(const QString &text, QList<quint16> &mask, int cursor) const
-{
-    // A list marker is not inline markup; it stays put, and keeps its `*` out of the scan.
-    int start = 0;
-    while (start < text.size() && text.at(start).isSpace()) {
-        ++start;
-    }
-    int after = start;
-    if (after < text.size() && QStringLiteral("-*+").contains(text.at(after))) {
-        ++after;
-    } else {
-        while (after < text.size() && text.at(after).isDigit()) {
-            ++after;
-        }
-        const bool ordered = after > start && after < text.size()
-            && (text.at(after) == '.' || text.at(after) == ')');
-        after = ordered ? after + 1 : start;
-    }
-    if (after > start && after < text.size() && text.at(after) == ' ') {
-        mark(mask, start, after, Marker);
-        ++after;
-    } else {
-        after = 0;
-    }
-
-    scan(text, after, text.size(), 0, mask, cursor);
+    applyMask(line);
 }
 
 QTextCharFormat MarkdownHighlighter::formatFor(quint16 bits) const
 {
     QTextCharFormat format;
-    if (bits & Hidden) {
+    if (bits & bit(StyleBit::Hidden)) {
         // A QTextDocument cannot hide characters. Shrinking or stretching the font would,
         // but a one-pixel font poisons the glyph atlas Qt Quick shares between every item
         // on screen — text elsewhere in the window comes out as slivers. Squeezing the
@@ -397,61 +183,37 @@ QTextCharFormat MarkdownHighlighter::formatFor(quint16 bits) const
         format.setForeground(Qt::transparent);
         return format;
     }
-    if (bits & Bold) {
+    if (bits & bit(StyleBit::Bold)) {
         format.setFontWeight(QFont::Bold);
     }
-    if (bits & Italic) {
+    if (bits & bit(StyleBit::Italic)) {
         format.setFontItalic(true);
     }
-    if (bits & Strike) {
+    if (bits & bit(StyleBit::Strike)) {
         format.setFontStrikeOut(true);
     }
-    if (bits & Code) {
-        format.setFontFamilies({m_monoFamily});
-        format.setProperty(QTextFormat::FontPixelSize, m_codeSize);
+    if (bits & bit(StyleBit::Code)) {
+        format.merge(codeFormat());
         format.setBackground(m_codeBackground);
     }
-    if (bits & Link) {
+    if (bits & bit(StyleBit::Link)) {
         format.setForeground(m_accent);
         format.setFontUnderline(true);
     }
     // Last, so that a revealed marker is muted rather than painted like its span.
-    if (bits & Marker) {
+    if (bits & bit(StyleBit::Marker)) {
         format.setForeground(m_muted);
     }
     return format;
-}
-
-/// TextArea has no line spacing of its own, so it is set on the document's blocks.
-void MarkdownHighlighter::applyLineHeight()
-{
-    QTextDocument *doc = document();
-    if (m_spacing || !doc || m_lineHeight <= 0) {
-        return;
-    }
-    m_spacing = true;
-    for (QTextBlock block = doc->begin(); block.isValid(); block = block.next()) {
-        const bool collapsed = block.userState() == 1;
-        const int type = collapsed ? QTextBlockFormat::FixedHeight : QTextBlockFormat::ProportionalHeight;
-        const qreal height = collapsed ? 1 : m_lineHeight * 100;
-
-        const QTextBlockFormat current = block.blockFormat();
-        if (current.lineHeightType() == type && qFuzzyCompare(current.lineHeight(), height)) {
-            continue;
-        }
-        QTextBlockFormat format = current;
-        format.setLineHeight(height, type);
-        QTextCursor cursor(block);
-        // Joined so that undo takes the spacing back with the edit that provoked it.
-        cursor.joinPreviousEditBlock();
-        cursor.setBlockFormat(format);
-        cursor.endEditBlock();
-    }
-    m_spacing = false;
 }
 
 void blogawrite_register_types()
 {
     // Its own URI: registering into `com.blogawrite` would shadow the generated QML module.
     qmlRegisterType<MarkdownHighlighter>("com.blogawrite.text", 1, 0, "MarkdownHighlighter");
+    qmlRegisterType<RenderedHighlighter>("com.blogawrite.text", 1, 0, "RenderedHighlighter");
+    // A singleton rather than a type: there is one checker, and one moment at which it
+    // becomes ready, and the foot of the window wants to hear about it.
+    qmlRegisterSingletonInstance("com.blogawrite.text", 1, 0, "CheckerWatch",
+                                 CheckerWatch::instance());
 }

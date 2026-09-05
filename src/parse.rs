@@ -1,12 +1,53 @@
 use pulldown_cmark::{Event, Options, Parser};
+use std::ops::Range;
 
-fn options() -> Options {
+/// Top-level Markdown blocks and the source between them. `gaps` has one more item than
+/// `blocks`: before the first block, between each pair, and after the last. Joining them
+/// recreates the input byte for byte.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Segments {
+    pub blocks: Vec<String>,
+    pub gaps: Vec<String>,
+}
+
+pub fn options() -> Options {
     Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_FOOTNOTES
 }
 
-/// Split markdown source into top-level blocks, preserving each block's raw text verbatim.
-pub fn segment(source: &str) -> Vec<String> {
-    let mut blocks = Vec::new();
+/// Split Markdown while retaining every byte outside its semantic blocks. Pulldown-cmark
+/// deliberately emits no event for some source, notably reference definitions. Any such
+/// non-whitespace gap becomes a block of its own rather than disappearing on save.
+pub fn segments(source: &str) -> Segments {
+    let mut ranges = semantic_ranges(source);
+    for range in &mut ranges {
+        range.end = range.start + source[range.clone()].trim_end().len();
+    }
+    ranges.retain(|range| !range.is_empty());
+    include_unparsed(source, &mut ranges);
+    ranges.sort_by_key(|range| range.start);
+
+    if ranges.is_empty() {
+        return Segments {
+            blocks: vec![source.to_string()],
+            gaps: vec![String::new(), String::new()],
+        };
+    }
+
+    let blocks = ranges
+        .iter()
+        .map(|range| source[range.clone()].to_string())
+        .collect();
+    let mut gaps = Vec::with_capacity(ranges.len() + 1);
+    gaps.push(source[..ranges[0].start].to_string());
+    for pair in ranges.windows(2) {
+        gaps.push(source[pair[0].end..pair[1].start].to_string());
+    }
+    gaps.push(source[ranges.last().expect("there is a range").end..].to_string());
+    Segments { blocks, gaps }
+}
+
+fn semantic_ranges(source: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
     let mut depth = 0usize;
     let mut start = 0usize;
 
@@ -21,25 +62,38 @@ pub fn segment(source: &str) -> Vec<String> {
             Event::End(_) => {
                 depth -= 1;
                 if depth == 0 {
-                    blocks.push(source[start..range.end].trim_end().to_string());
+                    ranges.push(start..range.end);
                 }
             }
-            Event::Rule if depth == 0 => {
-                blocks.push(source[range].trim_end().to_string());
-            }
+            _ if depth == 0 => ranges.push(range),
             _ => {}
         }
     }
-
-    if blocks.is_empty() {
-        blocks.push(String::new());
-    }
-    blocks
+    ranges
 }
 
-/// Document text from blocks: one blank line between each.
-pub fn join(blocks: &[String]) -> String {
-    blocks.join("\n\n")
+fn include_unparsed(source: &str, ranges: &mut Vec<Range<usize>>) {
+    ranges.sort_by_key(|range| range.start);
+    let mut uncovered = Vec::new();
+    let mut end = 0;
+    for range in ranges.iter() {
+        add_non_whitespace(source, end..range.start, &mut uncovered);
+        end = end.max(range.end);
+    }
+    add_non_whitespace(source, end..source.len(), &mut uncovered);
+    ranges.extend(uncovered);
+}
+
+fn add_non_whitespace(source: &str, range: Range<usize>, ranges: &mut Vec<Range<usize>>) {
+    let part = &source[range.clone()];
+    let Some(first) = part.find(|character: char| !character.is_whitespace()) else {
+        return;
+    };
+    let last = part
+        .rfind(|character: char| !character.is_whitespace())
+        .expect("a first non-whitespace character has a last");
+    let last = last + part[last..].chars().next().expect("last points at a character").len_utf8();
+    ranges.push(range.start + first..range.start + last);
 }
 
 /// What kind of block this is, as the QML view names them.
@@ -116,8 +170,30 @@ pub fn rendered(block: &str) -> String {
 mod tests {
     use super::*;
 
+    /// The blocks of `source`, which is what the model is built out of. An empty
+    /// document is one empty block, so that there is always somewhere to type.
+    fn segment(source: &str) -> Vec<String> {
+        if source.trim().is_empty() {
+            return vec![String::new()];
+        }
+        segments(source).blocks
+    }
+
+    /// The blocks put back together with one blank line between them: what the document
+    /// would look like had it been written out afresh rather than kept as it was found.
     fn roundtrip(source: &str) -> String {
-        join(&segment(source))
+        segment(source).join("\n\n")
+    }
+
+    /// The document put back together byte for byte, which is what saving does.
+    fn exact_roundtrip(source: &str) -> String {
+        let Segments { blocks, gaps } = segments(source);
+        let mut text = gaps[0].clone();
+        for (index, block) in blocks.iter().enumerate() {
+            text.push_str(block);
+            text.push_str(&gaps[index + 1]);
+        }
+        text
     }
 
     #[test]
@@ -164,8 +240,26 @@ mod tests {
     }
 
     #[test]
-    fn collapses_runs_of_blank_lines() {
+    fn semantic_join_normalizes_blank_lines() {
         assert_eq!(roundtrip("a\n\n\n\nb"), "a\n\nb");
+    }
+
+    #[test]
+    fn exact_segments_preserve_all_whitespace() {
+        for source in ["a\n\n\n\nb", "  a  \n\n b\n", "", "   \n\n "] {
+            assert_eq!(exact_roundtrip(source), source);
+        }
+    }
+
+    #[test]
+    fn exact_segments_keep_html_and_reference_definitions() {
+        for source in [
+            "<section>\nraw html\n</section>\n",
+            "[home]: https://example.com\n\nGo [home].\n",
+        ] {
+            assert_eq!(exact_roundtrip(source), source);
+            assert!(segments(source).blocks.iter().any(|block| !block.is_empty()));
+        }
     }
 
     #[test]
