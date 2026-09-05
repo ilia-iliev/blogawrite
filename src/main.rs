@@ -1,6 +1,12 @@
+pub mod blocks;
 pub mod document;
+pub mod lint;
 pub mod parse;
+pub mod spell;
 pub mod state;
+pub mod storage;
+pub mod style;
+pub mod text;
 pub mod theme;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QUrl};
@@ -45,6 +51,8 @@ fn main() {
         eprintln!("usage: blogawrite <file.md>");
         std::process::exit(2);
     }
+    // Before Qt, so that reading the dictionaries happens alongside it rather than after.
+    lint::preload();
     prefer_software_renderer();
     leave_decorations_to_the_compositor();
 

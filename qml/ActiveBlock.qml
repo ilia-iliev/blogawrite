@@ -28,6 +28,20 @@ TextEdit {
     // Whether this is the block the cursor is in.
     property bool current: true
 
+    // The checker's objection to what the cursor is standing in, as far as this block
+    // need know it: the span a suggestion goes in — -1 when the checker offered none —
+    // and the one suggestion on show. Which of them that is, the model keeps.
+    property int lintAt: -1
+    property int lintLength: 0
+    property string lintReplacement: ""
+    // The misspelled word under the cursor, where that is what the checker objected to.
+    property string lintWord: ""
+
+    // Whether the typing has stopped. Nothing is marked in a block being typed into: a
+    // word half-written is not a word spelled wrong, and a sentence half-written is not
+    // yet a sentence. The checker has its say once the writer pauses.
+    property bool settled: true
+
     readonly property bool spanning: beyond === "above" || beyond === "below"
     // Where this block's own selection is pinned: the end of it the cursor is not at.
     readonly property int ownAnchor: cursorPosition === selectionStart ? selectionEnd
@@ -36,6 +50,10 @@ TextEdit {
     // Styling the document counts as a change, so edits are only reported once the
     // block's own text is in place.
     property bool started: false
+    // The text as the model last heard it. Styling counts as a change of the document,
+    // and the cursor moving is enough to provoke one, so the text itself is what says
+    // whether anything was actually typed.
+    property string reported: ""
 
     readonly property bool live: kind === "paragraph" || kind === "list"
     readonly property bool code: kind === "code"
@@ -48,9 +66,12 @@ TextEdit {
     signal leave(int direction)
     signal extend(int direction, int from)
     signal collapse(int at)
+    signal selectAllRequested()
     signal tapped()
     signal copyRequested(int at)
     signal deleteRequested(int at, string insert)
+    signal cycleLintRequested(int direction)
+    signal learnRequested(string word)
 
     wrapMode: TextEdit.Wrap
     selectByMouse: true
@@ -91,6 +112,8 @@ TextEdit {
         accent: Theme.accent
         muted: Theme.muted
         codeBackground: Theme.codeBackground
+        lint: Theme.lint
+        settled: root.settled
         monoFamily: Theme.monoFamily
         codeSize: Theme.codeSize
         lineHeight: Theme.lineHeight
@@ -103,14 +126,29 @@ TextEdit {
     }
 
     Component.onCompleted: {
+        reported = source
         text = source
         started = true
+        // The model hears about `settled` when it changes, and a fresh editor is never
+        // mid-word. Without saying so, a block reached while another was being typed in
+        // would show its marks with nothing at the foot of the window to go with them.
+        settledChanged()
         if (current) {
             place()
             settle.start()
         } else {
             showSelection()
         }
+    }
+
+    // How long a pause counts as having stopped typing. Long enough to type through the
+    // end of a word and into the next one, short enough that a writer who paused to
+    // think finds the checker has already caught up.
+    Timer {
+        id: pause
+
+        interval: 600
+        onTriggered: root.settled = true
     }
 
     // The loader sizes the editor only after it is built, so the click lands properly on
@@ -130,6 +168,7 @@ TextEdit {
     // The model rewrites this block under the editor when a selection is deleted across it.
     onSourceChanged: {
         if (started && text !== source) {
+            reported = source
             text = source
             cursorPosition = initialPosition < 0 ? length : Math.min(initialPosition, length)
         }
@@ -195,9 +234,13 @@ TextEdit {
     }
 
     onTextChanged: {
-        if (started) {
-            root.edited(text, cursorPosition)
+        if (!started || text === reported) {
+            return
         }
+        reported = text
+        root.settled = false
+        pause.restart()
+        root.edited(text, cursorPosition)
     }
 
     // Put `marker` either side of the selection, or start an empty pair to type into.
@@ -236,6 +279,21 @@ TextEdit {
             run += 1
         }
         return run
+    }
+
+    // Put the suggestion on show where the checker objected, leaving the cursor at the
+    // end of it. Written as one edit rather than a remove and an insert, so that one
+    // undo takes it back; the model hears about it the way it hears about typing.
+    // Taken down first: the edit goes to the model, which looks at the block again and
+    // has nothing left to object to, and the properties below are gone by the next line.
+    function acceptLint() {
+        if (lintAt < 0) {
+            return
+        }
+        const at = lintAt
+        const replacement = lintReplacement
+        text = text.slice(0, at) + replacement + text.slice(at + lintLength)
+        cursorPosition = at + replacement.length
     }
 
     // `[selection](|)`, or `[|]()` with nothing selected. `prefix` is "!" for an image.
@@ -297,6 +355,14 @@ TextEdit {
     }
 
     Keys.onPressed: (event) => {
+        // Select-all reaches past this block, so the document answers it before any
+        // selection already running is let go: it replaces that one rather than ending it.
+        if (event.key === Qt.Key_A && event.modifiers === Qt.ControlModifier) {
+            event.accepted = true
+            root.selectAllRequested()
+            return
+        }
+
         // A selection that is running answers some keys itself, the cursor keys carry
         // on moving it, and everything else lets it go before doing its usual job.
         if (beyond !== "" && !movesSelection(event)) {
@@ -323,6 +389,15 @@ TextEdit {
         case Qt.Key_Up:
         case Qt.Key_Down:
             let direction = event.key === Qt.Key_Down ? 1 : -1
+            // Control walks the suggestions the checker offered rather than the text.
+            // Where it has offered none it is left to move the cursor as it always did.
+            if (event.modifiers === Qt.ControlModifier) {
+                if (lintAt >= 0) {
+                    event.accepted = true
+                    root.cycleLintRequested(direction)
+                }
+                break
+            }
             let atEdge = direction > 0
                 ? cursorRectangle.y >= positionToRectangle(length).y
                 : cursorRectangle.y <= positionToRectangle(0).y
@@ -376,6 +451,22 @@ TextEdit {
             break
         case Qt.Key_Return:
         case Qt.Key_Enter:
+            if (event.modifiers === Qt.ControlModifier) {
+                if (lintAt >= 0) {
+                    event.accepted = true
+                    root.acceptLint()
+                }
+                break
+            }
+            // Shift as well: the word is spelled the way the writer meant it, and the
+            // dictionary is the one that is wrong. It keeps the word from here on.
+            if (event.modifiers === (Qt.ControlModifier | Qt.ShiftModifier)) {
+                if (lintWord !== "") {
+                    event.accepted = true
+                    root.learnRequested(lintWord)
+                }
+                break
+            }
             // A second Enter ends the block rather than adding a blank line to it.
             if (cursorPosition > 0 && text.charAt(cursorPosition - 1) === "\n") {
                 event.accepted = true

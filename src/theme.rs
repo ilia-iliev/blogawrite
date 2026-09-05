@@ -20,6 +20,7 @@ pub mod qobject {
         #[qproperty(QString, accent)]
         #[qproperty(QString, code_background)]
         #[qproperty(QString, active_background)]
+        #[qproperty(QString, lint)]
         #[qproperty(QString, border)]
         #[qproperty(QString, prompt_background)]
         #[qproperty(QString, prompt_text)]
@@ -42,6 +43,7 @@ pub struct ThemeRust {
     accent: QString,
     code_background: QString,
     active_background: QString,
+    lint: QString,
     border: QString,
     prompt_background: QString,
     prompt_text: QString,
@@ -64,6 +66,10 @@ impl Default for ThemeRust {
             accent: QString::from("#2F6F4E"),
             code_background: QString::from("#F0EEE9"),
             active_background: QString::from("#F3F1EA"),
+            // Behind anything the checker took exception to, a misspelled word and a
+            // clumsy phrase alike: wheat, washed out far enough to mark the words
+            // without making them hard to read.
+            lint: QString::from("#F3E4C3"),
             border: QString::from("#E4E0D6"),
             prompt_background: QString::from("#26241F"),
             prompt_text: QString::from("#FFFFFF"),
@@ -71,7 +77,9 @@ impl Default for ThemeRust {
             body_family: QString::from("sans-serif"),
             content_width: 720,
             body_size: 16,
-            // Qt renders markdown code at about three quarters of the body size.
+            // Code is drawn at this size everywhere: Qt's own markdown rendering picks
+            // the system's fixed font at the system's own size, and the highlighters put
+            // this back, so a block reads the same rendered as it does under the cursor.
             code_size: 12,
             line_height: 1.5,
             block_spacing: 14,

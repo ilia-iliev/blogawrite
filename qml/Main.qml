@@ -1,5 +1,6 @@
 import QtQuick
 import com.blogawrite
+import com.blogawrite.text
 
 // Nothing here comes from QtQuick.Controls. It would be worth about twenty milliseconds
 // of every launch — two libraries and two QML modules, loaded before the first frame —
@@ -17,6 +18,16 @@ Window {
 
     Document {
         id: doc
+    }
+
+    // The checker takes a moment longer to come up than the window does, and a word taken
+    // into the dictionary changes what it would say about every block at once. The blocks
+    // are told to look again by the highlighters themselves; the foot of the window, here.
+    Connections {
+        target: CheckerWatch
+        function onChanged() {
+            doc.refreshLint()
+        }
     }
 
     // main.rs has already refused to start without a file, so there is always one here.
@@ -153,6 +164,8 @@ Window {
             Component {
                 id: activeBlock
                 ActiveBlock {
+                    id: editor
+
                     source: block.text
                     kind: block.kind
                     current: block.cursorHere
@@ -162,6 +175,10 @@ Window {
                           : block.otherEnd < block.index ? "above" : "here"
                     initialPosition: doc.pendingCursor
                     initialPoint: block.tapPoint
+                    lintAt: doc.lintAt
+                    lintLength: doc.lintLength
+                    lintReplacement: doc.lintReplacement
+                    lintWord: doc.lintWord
                     onEdited: (body, cursor) => doc.setBlockText(block.index, body, cursor)
                     onCursorMoved: (cursor) => doc.setCursorPosition(block.index, cursor)
                     onUndoRequested: doc.undo()
@@ -170,9 +187,21 @@ Window {
                     onLeave: (direction) => doc.moveTo(block.index + direction, direction)
                     onExtend: (direction, from) => doc.selectTo(block.index + direction, from)
                     onCollapse: (at) => doc.clearSelection(at)
+                    onSelectAllRequested: {
+                        doc.selectAll()
+                        // The cursor lands at the foot of the document. If that is this
+                        // block, no new editor is made to put it there, so it sees to
+                        // its own share of the selection.
+                        if (doc.activeIndex === block.index) {
+                            editor.selectAll()
+                        }
+                    }
                     onTapped: doc.activate(block.index)
                     onCopyRequested: (at) => clipboard.take(doc.selectionText(at))
                     onDeleteRequested: (at, insert) => doc.deleteSelection(at, insert)
+                    onCycleLintRequested: (direction) => doc.cycleLint(direction)
+                    onLearnRequested: (word) => CheckerWatch.learn(word)
+                    onSettledChanged: doc.settle(editor.settled)
                 }
             }
         }
@@ -320,6 +349,68 @@ Window {
         }
     }
 
+    // File errors must be visible when the app was launched from a desktop entry, where
+    // stderr has nowhere useful to go.
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: fileError.height + 16
+        color: Theme.promptBackground
+        visible: doc.errorMessage !== ""
+        z: 2
+
+        Text {
+            id: fileError
+
+            x: (parent.width - width) / 2
+            y: 8
+            width: Math.min(Theme.contentWidth, parent.width - 64)
+            text: doc.errorMessage
+            wrapMode: Text.WordWrap
+            color: Theme.promptText
+            font.family: Theme.bodyFamily
+            font.pixelSize: Theme.bodySize
+        }
+    }
+
+    // What the checker makes of where the cursor is standing, at the foot of the window.
+    // The wash on the words says that something is wrong with them; this says what.
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: lint.height + 16
+        color: Theme.promptBackground
+        visible: doc.lintMessage !== ""
+
+        Text {
+            id: lint
+
+            x: (parent.width - width) / 2
+            y: 8
+            width: Math.min(Theme.contentWidth, parent.width - 64)
+            // The checker writes its messages in markdown, with the words it is talking
+            // about in backticks, and the suggestion is put in the same voice. One with
+            // nothing in it is a suggestion to take the words out.
+            readonly property string suggestion:
+                doc.lintOptions === 0 ? ""
+              : doc.lintReplacement === "" ? "  →  *delete*"
+              : "  →  `" + doc.lintReplacement + "`"
+            // Only ever one suggestion on show. The count is there to say that ctrl with
+            // the up and down keys has somewhere to go.
+            readonly property string counter:
+                doc.lintOptions > 1 ? "  " + (doc.lintChoice + 1) + "/" + doc.lintOptions : ""
+
+            text: doc.lintMessage + suggestion + counter
+            textFormat: Text.MarkdownText
+            wrapMode: Text.WordWrap
+            color: Theme.promptText
+            font.family: Theme.bodyFamily
+            font.pixelSize: Theme.bodySize
+        }
+    }
+
     // Qt hands the clipboard to text items alone, so a selection that spans blocks is
     // copied by way of one that exists for nothing else.
     TextEdit {
@@ -402,6 +493,18 @@ Window {
                     text: qsTr("Save changes?")
                     color: Theme.promptText
                     font.family: Theme.monoFamily
+                    font.pixelSize: Theme.bodySize
+                }
+
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: Math.min(Theme.contentWidth, window.width - 64)
+                    visible: doc.errorMessage !== ""
+                    text: doc.errorMessage
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignHCenter
+                    color: Theme.promptText
+                    font.family: Theme.bodyFamily
                     font.pixelSize: Theme.bodySize
                 }
 

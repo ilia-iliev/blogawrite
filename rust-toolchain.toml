@@ -1,0 +1,3 @@
+[toolchain]
+# harper-core 2.8 does not compile on 1.92; see rust-version in Cargo.toml
+channel = "1.95"

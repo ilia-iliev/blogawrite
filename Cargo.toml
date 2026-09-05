@@ -2,11 +2,17 @@
 name = "blogawrite"
 version = "0.1.10"
 edition = "2024"
+# harper-core needs a compiler that infers an array of function items as the pointer type
+# the call expects; 1.92 does not, and stops with a type error inside harper itself.
+rust-version = "1.95"
 
 [dependencies]
 cxx = "1"
 cxx-qt = "0.7"
 cxx-qt-lib = { version = "0.7", features = ["qt_full"] }
+# The checker crosses threads, so Harper's concurrent representation is required. Its
+# thesaurus is not; suggestions used here come from lint rules and the spelling index.
+harper-core = { version = "2.8", default-features = false, features = ["concurrent"] }
 pulldown-cmark = "0.13.4"
 
 [build-dependencies]

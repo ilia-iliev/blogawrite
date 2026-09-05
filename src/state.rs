@@ -49,13 +49,5 @@ pub fn remember(path: &Path, index: i32) {
         .iter()
         .map(|(path, index)| format!("{index}\t{path}\n"))
         .collect();
-    if let Some(parent) = store.parent()
-        && let Err(error) = fs::create_dir_all(parent)
-    {
-        eprintln!("blogawrite: {}: {error}", parent.display());
-        return;
-    }
-    if let Err(error) = fs::write(&store, text) {
-        eprintln!("blogawrite: {}: {error}", store.display());
-    }
+    crate::storage::replace(&store, text.as_bytes());
 }

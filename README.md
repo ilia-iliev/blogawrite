@@ -1,10 +1,8 @@
 # blogawrite
 
-A minimal markdown editor for tiling manager like i3/sway. You type markdown and it renders.
+A minimal Markdown editor for tiling manager like i3/sway. You type Markdown and it renders.
 
 ## Install
-
-A single file that carries its own Qt.
 
 ```sh
 curl -LO https://github.com/ilia-iliev/blogawrite/releases/latest/download/blogawrite-x86_64.AppImage
@@ -12,20 +10,15 @@ chmod +x blogawrite-x86_64.AppImage
 ./blogawrite-x86_64.AppImage post.md
 ```
 
-That URL always serves the newest release. `SHA256SUMS` sits beside it on the [releases page](https://github.com/ilia-iliev/blogawrite/releases) 
-It picks Wayland or X11 at startup; override with `QT_QPA_PLATFORM=wayland` or `xcb`.
+That URL always serves the newest release. `SHA256SUMS` sits beside it on the [releases page](https://github.com/ilia-iliev/blogawrite/releases)
 
-## Using it
+## Checking
 
-```sh
-blogawrite post.md
-```
-
-The path to the file is required.
+American-English spelling and style checking are built into blogawrite. They work without a system dictionary or another package. Words you keep are stored in your personal blogawrite dictionary.
 
 ## Build from source
 
-Needs Rust 1.85+, a C++ compiler, and Qt 6.2+ with QtQuick.
+Rust 1.95+, a C++ compiler, and Qt 6.2+ with QtQuick
 
 ```sh
 # Debian / Ubuntu — QtQuick pulls in the last three at runtime whether you import
@@ -49,4 +42,4 @@ install -Dm644 packaging/blogawrite.svg \
 
 ## License
 
-MIT
+MIT pen
