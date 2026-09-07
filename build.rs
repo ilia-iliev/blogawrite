@@ -32,7 +32,7 @@ fn main() {
             // a pragma -- it has to come off the whole compiler invocation. Our own
             // sources each turn it back on, so only generated code goes unchecked.
             cc.flag("-Wno-maybe-uninitialized");
-            for source in ["blockhighlighter", "lint", "markdownhighlighter", "renderedhighlighter"] {
+            for source in ["blockhighlighter", "fonts", "lint", "markdownhighlighter", "renderedhighlighter"] {
                 println!("cargo::rerun-if-changed=cpp/{source}.cpp");
                 cc.file(format!("cpp/{source}.cpp"));
             }

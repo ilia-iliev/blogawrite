@@ -14,6 +14,7 @@ use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QUrl};
 // Registers `MarkdownHighlighter` into the QML module; defined in cpp/.
 unsafe extern "C" {
     fn blogawrite_register_types();
+    fn blogawrite_warm_fonts();
 }
 
 /// Qt Quick's OpenGL path spends the best part of two hundred milliseconds bringing the
@@ -45,6 +46,15 @@ fn leave_decorations_to_the_compositor() {
     unsafe { std::env::set_var("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1") };
 }
 
+/// Qt does not read the machine's fonts until something first asks for one, and what asks
+/// is the first piece of text in the QML — a fifth of the load spent waiting on fontconfig
+/// halfway through building the window. Start it here instead, on a thread of its own, and
+/// by the time the text wants a font the answer is already in.
+fn warm_fonts() {
+    // SAFETY: nothing but Qt's own font database is touched, and Qt locks it.
+    std::thread::spawn(|| unsafe { blogawrite_warm_fonts() });
+}
+
 fn main() {
     // A document is the whole point: there is no way to pick one from inside the app.
     if std::env::args().nth(1).is_none() {
@@ -57,6 +67,7 @@ fn main() {
     leave_decorations_to_the_compositor();
 
     let mut app = QGuiApplication::new();
+    warm_fonts();
     unsafe { blogawrite_register_types() };
     let mut engine = QQmlApplicationEngine::new();
     if let Some(engine) = engine.as_mut() {
