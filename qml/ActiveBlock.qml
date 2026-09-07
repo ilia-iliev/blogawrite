@@ -28,6 +28,18 @@ TextEdit {
     // Whether this is the block the cursor is in.
     property bool current: true
 
+    // Whether the search bar is open. It holds the keyboard while it is — the writer is
+    // still typing what they are looking for — so an occurrence is selected here without
+    // the block taking focus back off it.
+    property bool searching: false
+    // Where the occurrence the search walked to starts, when it stands in this block.
+    // Its far end is `initialPosition`, the same as for a cursor placed any other way.
+    property int searchAt: -1
+    // Bumped by the model every time it puts an occurrence on show. Two occurrences in
+    // the same block leave the cursor in the block it was already in, and no new editor
+    // is made to select the second: this is what tells the standing one to look again.
+    property int searchSerial: 0
+
     // The checker's objection to what the cursor is standing in, as far as this block
     // need know it: the span a suggestion goes in — -1 when the checker offered none —
     // and the one suggestion on show. Which of them that is, the model keeps.
@@ -72,6 +84,7 @@ TextEdit {
     signal deleteRequested(int at, string insert)
     signal cycleLintRequested(int direction)
     signal learnRequested(string word)
+    signal searchRequested()
 
     wrapMode: TextEdit.Wrap
     selectByMouse: true
@@ -133,11 +146,13 @@ TextEdit {
         // mid-word. Without saying so, a block reached while another was being typed in
         // would show its marks with nothing at the foot of the window to go with them.
         settledChanged()
-        if (current) {
+        if (!current) {
+            showSelection()
+        } else if (searching) {
+            showOccurrence()
+        } else {
             place()
             settle.start()
-        } else {
-            showSelection()
         }
     }
 
@@ -177,6 +192,8 @@ TextEdit {
     onCurrentChanged: {
         if (!current) {
             showSelection()
+        } else if (searching) {
+            showOccurrence()
         } else if (!activeFocus) {
             // The cursor has come back to this block from another one. A click brings it
             // back too, and has already put it where it belongs.
@@ -192,6 +209,24 @@ TextEdit {
             // one with the cursor keeps its own, which the editor sees to from here.
             deselect()
         }
+    }
+
+    // The search walked to an occurrence standing in this block: select it, and leave
+    // the keyboard where it is.
+    onSearchSerialChanged: {
+        if (started && current) {
+            showOccurrence()
+        }
+    }
+
+    // The word found, selected from its start to its end. A selection of the editor's
+    // own, so that closing the search leaves something the keys already know how to
+    // copy or type over.
+    function showOccurrence() {
+        if (searchAt < 0) {
+            return
+        }
+        select(Math.min(searchAt, length), Math.min(initialPosition, length))
     }
 
     // Put the cursor where the block was clicked, or where the last block left it.
@@ -447,6 +482,15 @@ TextEdit {
             if (event.modifiers === (Qt.ControlModifier | Qt.ShiftModifier)) {
                 event.accepted = true
                 root.insertLink("")
+            }
+            break
+        case Qt.Key_F:
+            // Taken here rather than left to a window shortcut: on X11 Qt reads
+            // ctrl+F as a step to the right, which an editor holding the keyboard
+            // answers before any shortcut of ours would be reached.
+            if (event.modifiers === Qt.ControlModifier) {
+                event.accepted = true
+                root.searchRequested()
             }
             break
         case Qt.Key_Return:

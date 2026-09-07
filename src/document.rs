@@ -1,6 +1,7 @@
 use crate::blocks::{self, Span};
 use crate::lint;
 use crate::parse;
+use crate::search;
 use crate::state;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QString, QUrl, QVariant};
@@ -62,6 +63,23 @@ pub mod qobject {
         #[qproperty(i32, lint_length)]
         #[qproperty(i32, lint_choice)]
         #[qproperty(i32, lint_options)]
+        /// Whether the search bar is open. While it is, the keyboard is its own and the
+        /// foot of the window is given over to it.
+        #[qproperty(bool, search_active)]
+        /// How many occurrences the word looked for has, and which of them is on show.
+        /// No occurrences leaves nothing chosen, which is -1.
+        #[qproperty(i32, search_count)]
+        #[qproperty(i32, search_choice)]
+        /// Where the occurrence on show starts in its block, counted the way Qt counts.
+        /// Its far end is `pending_cursor`, the same as for a cursor placed any other way.
+        #[qproperty(i32, search_at)]
+        /// Whether the writer asked for another occurrence of a word that has only the
+        /// one. Nothing moves, so the foot of the window says why.
+        #[qproperty(bool, search_alone)]
+        /// Bumped whenever an occurrence is put on show. Moving between two occurrences
+        /// of the same block leaves the cursor in the block it was already in, and there
+        /// is no new editor made to select them: this is what tells the standing one.
+        #[qproperty(i32, search_serial)]
         type Document = super::DocumentRust;
     }
 
@@ -134,6 +152,20 @@ pub mod qobject {
         /// in, or the one before it. They wrap around; only one is ever shown.
         #[qinvokable]
         fn cycle_lint(self: Pin<&mut Document>, direction: i32);
+
+        /// Open the search bar, giving it the keyboard.
+        #[qinvokable]
+        fn open_search(self: Pin<&mut Document>);
+        /// Close it again, leaving the cursor on the occurrence it walked to.
+        #[qinvokable]
+        fn close_search(self: Pin<&mut Document>);
+        /// Look for `needle` afresh and select the first occurrence of it.
+        #[qinvokable]
+        fn search_for(self: Pin<&mut Document>, needle: &QString);
+        /// Select the occurrence `direction` away from the one on show, wrapping round
+        /// the document at either end.
+        #[qinvokable]
+        fn cycle_search(self: Pin<&mut Document>, direction: i32);
 
         /// Note where the cursor is so the next session can pick it up.
         #[qinvokable]
@@ -220,6 +252,15 @@ pub struct DocumentRust {
     lint_length: i32,
     lint_choice: i32,
     lint_options: i32,
+    search_active: bool,
+    /// Every occurrence of the word looked for, and which of them is under the cursor.
+    /// The two below are that, as the foot of the window needs to read it.
+    search: search::Search,
+    search_count: i32,
+    search_choice: i32,
+    search_at: i32,
+    search_alone: bool,
+    search_serial: i32,
 }
 
 impl Default for DocumentRust {
@@ -250,6 +291,13 @@ impl Default for DocumentRust {
             lint_length: 0,
             lint_choice: 0,
             lint_options: 0,
+            search_active: false,
+            search: search::Search::default(),
+            search_count: 0,
+            search_choice: -1,
+            search_at: -1,
+            search_alone: false,
+            search_serial: 0,
         }
     }
 }
@@ -674,6 +722,77 @@ impl Document {
         self.show_suggestion(choice);
     }
 
+    /// The block being edited is re-read before the search bar opens: where a word turns
+    /// up is worked out over the blocks as they will be once it is rendered again, so
+    /// that walking to an occurrence never finds the document has moved underneath it.
+    fn open_search(mut self: Pin<&mut Self>) {
+        let index = *self.active_index();
+        if index >= 0 {
+            self.as_mut().commit(index);
+            let last = self.blocks.len() as i32 - 1;
+            self.as_mut().set_active_index(index.clamp(0, last));
+        }
+        // A selection running across blocks is let go: what the search finds is the
+        // only thing under the cursor from here on.
+        self.as_mut().set_selection_anchor(-1);
+        self.as_mut().set_search_alone(false);
+        self.set_search_active(true);
+    }
+
+    /// The occurrence walked to is left selected: it is usually the very thing the
+    /// writer opened the search to type over.
+    fn close_search(mut self: Pin<&mut Self>) {
+        self.as_mut().rust_mut().search.forget();
+        self.as_mut().set_search_count(0);
+        self.as_mut().set_search_choice(-1);
+        self.as_mut().set_search_at(-1);
+        self.as_mut().set_search_alone(false);
+        self.set_search_active(false);
+    }
+
+    fn search_for(mut self: Pin<&mut Self>, needle: &QString) {
+        let needle = needle.to_string();
+        let blocks = self.blocks.clone();
+        let found = self.as_mut().rust_mut().search.look_for(&blocks, &needle);
+        self.as_mut().set_search_alone(false);
+        self.show_occurrence(found);
+    }
+
+    /// A word that turns up once has nowhere to walk to. Nothing moves, and the flag is
+    /// what the foot of the window says so with.
+    fn cycle_search(mut self: Pin<&mut Self>, direction: i32) {
+        match self.as_mut().rust_mut().search.walk(direction) {
+            Some(found) => self.show_occurrence(Some(found)),
+            None => {
+                let alone = self.search.count() == 1;
+                self.set_search_alone(alone);
+            }
+        }
+    }
+
+    /// Put `found` under the cursor, selected from its start to its end. The block's own
+    /// editor draws that selection, rather than the document's cross-block one: a word
+    /// found is a word to be typed over, and a selection of the editor's own is the one
+    /// the keys already know how to replace.
+    fn show_occurrence(mut self: Pin<&mut Self>, found: Option<search::Occurrence>) {
+        let count = self.search.count();
+        let choice = self.search.choice();
+        self.as_mut().set_search_count(count);
+        self.as_mut().set_search_choice(choice);
+        let Some(found) = found else {
+            self.set_search_at(-1);
+            return;
+        };
+        self.as_mut().set_search_at(found.at);
+        self.as_mut().set_pending_cursor(found.end);
+        self.as_mut().set_active_index(found.block);
+        self.as_mut().refresh_undo(found.end);
+        // Last of all, once everything it needs is in place: an editor already standing
+        // in this block reads this to know to look again.
+        let serial = *self.search_serial() + 1;
+        self.set_search_serial(serial);
+    }
+
     fn notify_changed(mut self: Pin<&mut Self>, index: i32, text_only: bool) {
         let parent = cxx_qt_lib::QModelIndex::default();
         let cell = self.as_mut().index(index, 0, &parent);
@@ -809,8 +928,9 @@ impl Document {
     }
 }
 
-/// The suggestion `direction` away from the one on show. They wrap around: the checker
-/// offers a handful and the writer walks them until one of them is right.
+/// The choice `direction` away from the one on show, out of `count` of them. They wrap
+/// around: the checker offers a handful of suggestions and the writer walks them until
+/// one of them is right, and the occurrences of a word are walked the same way.
 fn wrapped(choice: i32, direction: i32, count: i32) -> i32 {
     (choice + direction).rem_euclid(count)
 }

@@ -179,6 +179,9 @@ Window {
                     lintLength: doc.lintLength
                     lintReplacement: doc.lintReplacement
                     lintWord: doc.lintWord
+                    searching: doc.searchActive
+                    searchAt: doc.searchAt
+                    searchSerial: doc.searchSerial
                     onEdited: (body, cursor) => doc.setBlockText(block.index, body, cursor)
                     onCursorMoved: (cursor) => doc.setCursorPosition(block.index, cursor)
                     onUndoRequested: doc.undo()
@@ -201,6 +204,7 @@ Window {
                     onDeleteRequested: (at, insert) => doc.deleteSelection(at, insert)
                     onCycleLintRequested: (direction) => doc.cycleLint(direction)
                     onLearnRequested: (word) => CheckerWatch.learn(word)
+                    onSearchRequested: search.open()
                     onSettledChanged: doc.settle(editor.settled)
                 }
             }
@@ -382,7 +386,7 @@ Window {
         anchors.bottom: parent.bottom
         height: lint.height + 16
         color: Theme.promptBackground
-        visible: doc.lintMessage !== ""
+        visible: doc.lintMessage !== "" && !doc.searchActive
 
         Text {
             id: lint
@@ -425,11 +429,145 @@ Window {
         }
     }
 
+    // Find a word in the document. The bar holds the keyboard while it is open — the
+    // writer is still typing what they are looking for — and each occurrence it walks to
+    // is selected by the cursor in the text above. Opened from the block being edited,
+    // which sees the keystroke first; closed from in here.
+    Rectangle {
+        id: search
+
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: bar.height + 16
+        color: Theme.promptBackground
+        visible: doc.searchActive
+        // Above the block being edited and above a file error, which is what the writer
+        // asked for by opening this; both are back the moment it closes.
+        z: 3
+
+        function open() {
+            doc.openSearch()
+            needle.forceActiveFocus()
+            // Re-opened on the word looked for last time: it is found again straight
+            // away, and typing replaces it rather than adding to it.
+            needle.selectAll()
+            doc.searchFor(needle.text)
+        }
+
+        function close() {
+            doc.closeSearch()
+            view.refocusActive()
+        }
+
+        Item {
+            id: bar
+
+            x: (parent.width - width) / 2
+            y: 8
+            width: Math.min(Theme.contentWidth, window.width - 64)
+            height: needle.height
+
+            Text {
+                id: label
+
+                anchors.verticalCenter: parent.verticalCenter
+                text: qsTr("find")
+                color: Theme.muted
+                font.family: Theme.monoFamily
+                font.pixelSize: Theme.bodySize
+            }
+
+            TextInput {
+                id: needle
+
+                anchors.left: label.right
+                anchors.leftMargin: 12
+                anchors.right: counter.left
+                anchors.rightMargin: 12
+                color: Theme.promptText
+                selectionColor: Theme.promptText
+                selectedTextColor: Theme.promptBackground
+                selectByMouse: true
+                // The window is not always the one the compositor calls active, and a
+                // TextInput throws its selection away the moment it is not: without this,
+                // the word left over from last time is not there to be typed over.
+                persistentSelection: true
+                font.family: Theme.monoFamily
+                font.pixelSize: Theme.bodySize
+
+                onTextChanged: doc.searchFor(text)
+
+                Keys.onPressed: (event) => {
+                    switch (event.key) {
+                    // Either way of saying the word is typed: the bar goes away and
+                    // the cursor is left on the occurrence the search walked to.
+                    case Qt.Key_Escape:
+                    case Qt.Key_Return:
+                    case Qt.Key_Enter:
+                        event.accepted = true
+                        search.close()
+                        break
+                    case Qt.Key_Z:
+                        // Undo is the document's. Taken here so that a TextInput holding
+                        // the keyboard does not answer it by unwinding the word typed
+                        // into it, which is not something the writer wrote.
+                        if (event.modifiers & Qt.ControlModifier) {
+                            event.accepted = true
+                        }
+                        break
+                    case Qt.Key_F:
+                        if (event.modifiers === Qt.ControlModifier) {
+                            event.accepted = true
+                            search.close()
+                        }
+                        break
+                    case Qt.Key_Up:
+                    case Qt.Key_Down:
+                        if (event.modifiers === Qt.ControlModifier) {
+                            event.accepted = true
+                            doc.cycleSearch(event.key === Qt.Key_Down ? 1 : -1)
+                        }
+                        break
+                    }
+                }
+            }
+
+            // Which occurrence of how many. Asking for another one of a word that has
+            // only the one moves nothing, so that answer is given here instead — and
+            // given as an answer, on a ground of its own, rather than as a count.
+            Rectangle {
+                id: counter
+
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                width: note.width + (doc.searchAlone ? 16 : 0)
+                height: note.height + (doc.searchAlone ? 6 : 0)
+                radius: 3
+                color: doc.searchAlone ? Theme.accent : "transparent"
+
+                Text {
+                    id: note
+
+                    anchors.centerIn: parent
+                    text: needle.text === "" ? ""
+                        : doc.searchAlone ? qsTr("only one")
+                        : doc.searchCount === 0 ? qsTr("no matches")
+                        : (doc.searchChoice + 1) + "/" + doc.searchCount
+                    color: doc.searchAlone ? Theme.promptText : Theme.muted
+                    font.family: Theme.monoFamily
+                    font.pixelSize: Theme.bodySize
+                }
+            }
+        }
+    }
+
     Shortcut { sequences: [StandardKey.Save]; onActivated: doc.save() }
     Shortcut { sequences: [StandardKey.MoveToNextPage]; onActivated: view.page(1) }
     Shortcut { sequences: [StandardKey.MoveToPreviousPage]; onActivated: view.page(-1) }
 
     onClosing: (close) => {
+        doc.closeSearch()
         doc.rememberPosition()
         if (doc.dirty) {
             close.accepted = false

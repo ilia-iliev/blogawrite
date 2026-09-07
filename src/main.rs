@@ -2,6 +2,7 @@ pub mod blocks;
 pub mod document;
 pub mod lint;
 pub mod parse;
+pub mod search;
 pub mod spell;
 pub mod state;
 pub mod storage;
