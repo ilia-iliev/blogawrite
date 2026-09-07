@@ -81,7 +81,10 @@ launch() {
     local started="$EPOCHREALTIME"
     : > "$log"
 
-    QT_LOGGING_RULES="$logging" "$binary" "$document" \
+    # Qt only writes its categorised logging to stderr when stderr looks like a console;
+    # anything else and this build hands it to journald instead, where the run cannot see
+    # it. stderr here is a pipe into `stamp`, so say plainly that it is to be written.
+    QT_FORCE_STDERR_LOGGING=1 QT_LOGGING_RULES="$logging" "$binary" "$document" \
         > /dev/null 2> >(stamp "$started" > "$log") &
     app=$!
     sleep "$window"
