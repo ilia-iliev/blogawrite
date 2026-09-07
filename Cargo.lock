@@ -253,6 +253,7 @@ dependencies = [
  "cxx-qt-lib",
  "harper-core",
  "pulldown-cmark",
+ "qt-build-utils",
 ]
 
 [[package]]

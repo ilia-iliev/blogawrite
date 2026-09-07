@@ -1,3 +1,7 @@
+// build.rs turns -Wmaybe-uninitialized off for the whole compiler invocation, to quiet a
+// file cxx generates. Nothing is wrong with this one, so ask for it back.
+#pragma GCC diagnostic warning "-Wmaybe-uninitialized"
+
 #include "renderedhighlighter.h"
 
 #include "blogawrite/src/style.cxx.h"
