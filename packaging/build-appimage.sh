@@ -18,12 +18,8 @@ tools=$work/tools
 # is a link that keeps working. The version rides along inside, as X-AppImage-Version.
 output=dist/blogawrite-$arch.AppImage
 
-cargo build --release
-
 rm -rf "$appdir"
-install -Dm755 target/release/blogawrite "$appdir/usr/bin/blogawrite"
-install -Dm644 blogawrite.desktop "$appdir/usr/share/applications/blogawrite.desktop"
-install -Dm644 packaging/blogawrite.svg "$appdir/usr/share/icons/hicolor/scalable/apps/blogawrite.svg"
+packaging/install.sh "$appdir/usr"
 
 mkdir -p "$tools" dist
 for tool in linuxdeploy linuxdeploy-plugin-qt; do

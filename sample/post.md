@@ -1,17 +1,16 @@
 # blogawrite
 
-A live-preview markdown editor. The block under the cursor shows **raw source**;
-every other block is rendere
+A live-preview Markdown editor. The block under the cursor shows its **raw source**; every other block stays rendered, so the file on disk is exactly what you typed.
 
 ## Lists
 
-- one item
-- two items
-  - nested item
-- three items
+- First item
+- Second item
+  - Nested item
+- Third item
 
-1. first
-2. second
+1. First
+2. Second
 
 ## Code
 
@@ -23,8 +22,7 @@ fn main() {
 
 ## Quote
 
-> Writing is thinking. To write well is to think clearly.
-> That's why it's so hard.
+> Writing is thinking. To write well is to think clearly. That's why it's so hard.
 
 ## Table
 
@@ -37,6 +35,4 @@ fn main() {
 
 Inline `code`, a [link](https://example.com), *emphasis* and ~~strikethrough~~.
 
-![A test idsaage](image.png)
-
-The end.dfds
+![A picture](image.png)

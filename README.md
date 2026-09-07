@@ -1,6 +1,14 @@
 # blogawrite
 
-A minimal Markdown editor for tiling manager like i3/sway. You type Markdown and it renders.
+A minimal Markdown editor for tiling managers like i3/sway. You type Markdown and it renders. Keyboard-first, no clicking required.
+The block with the live cursor is raw Markdown where rendering doesn't make sense. The other blocks are rendered.
+Blogawrite explicitly requires a filename and opens one file at a time. The tiling manager is assumed to handle tabs/multiple instances.
+Blogawrite supports the main Markdown primitives such as inline and code blocks, links, headings, and images:
+
+
+![screenshot of blogawrite](docs/screenshot.png)
+
+*The block with the live cursor is raw Markdown where rendering doesn't make sense*
 
 ## Install
 
@@ -10,36 +18,18 @@ chmod +x blogawrite-x86_64.AppImage
 ./blogawrite-x86_64.AppImage post.md
 ```
 
-That URL always serves the newest release. `SHA256SUMS` sits beside it on the [releases page](https://github.com/ilia-iliev/blogawrite/releases)
+## Grammar Checking
 
-## Checking
-
-American-English spelling and style checking are built into blogawrite. They work without a system dictionary or another package. Words you keep are stored in your personal blogawrite dictionary.
+American-English spelling and style checking are built into. Extendable personal dictionary included.
 
 ## Build from source
 
-Rust 1.95+, a C++ compiler, and Qt 6.2+ with QtQuick
-
 ```sh
-# Debian / Ubuntu — QtQuick pulls in the last three at runtime whether you import
-# them yourself or not
-sudo apt install build-essential qt6-base-dev qt6-declarative-dev qt6-wayland \
-    qml6-module-qtquick qml6-module-qtqml-workerscript \
-    qml6-module-qtquick-window qml6-module-qtquick-shapes
-# Fedora
-sudo dnf install gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtwayland
-# Arch
-sudo pacman -S base-devel qt6-base qt6-declarative qt6-wayland
+packaging/install.sh ~/.local
 ```
 
-```sh
-cargo build --release
-install -Dm755 target/release/blogawrite ~/.local/bin/blogawrite
-install -Dm644 blogawrite.desktop ~/.local/share/applications/blogawrite.desktop
-install -Dm644 packaging/blogawrite.svg \
-    ~/.local/share/icons/hicolor/scalable/apps/blogawrite.svg
-```
+It checks for Rust, a C++ compiler and Qt 6 with QtQuick first
 
 ## License
 
-MIT pen
+MIT
