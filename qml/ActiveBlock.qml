@@ -85,6 +85,8 @@ TextEdit {
     signal cycleLintRequested(int direction)
     signal learnRequested(string word)
     signal searchRequested()
+    signal toggleCheckingRequested()
+    signal readingRequested()
 
     wrapMode: TextEdit.Wrap
     selectByMouse: true
@@ -491,6 +493,22 @@ TextEdit {
             if (event.modifiers === Qt.ControlModifier) {
                 event.accepted = true
                 root.searchRequested()
+            }
+            break
+        case Qt.Key_G:
+            // Taken here for the same reason as ctrl+F above: an editor holding the
+            // keyboard answers a key before any window shortcut of ours is reached.
+            if (event.modifiers === Qt.ControlModifier) {
+                event.accepted = true
+                root.toggleCheckingRequested()
+            }
+            break
+        case Qt.Key_R:
+            // And here for the same reason again. The way back out is answered by the
+            // window: this editor is gone the moment reading mode is on.
+            if (event.modifiers === Qt.ControlModifier) {
+                event.accepted = true
+                root.readingRequested()
             }
             break
         case Qt.Key_Return:

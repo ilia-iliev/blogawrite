@@ -1,5 +1,8 @@
 use cxx_qt_lib::QString;
 
+/// Room either side of the column when the window is narrower than the column wants to be.
+const COLUMN_MARGIN: f64 = 64.0;
+
 /// Light theme constants, exposed to QML as the `Theme` singleton.
 #[cxx_qt::bridge]
 pub mod qobject {
@@ -14,7 +17,6 @@ pub mod qobject {
         #[qml_element]
         #[qml_singleton]
         #[qproperty(QString, background)]
-        #[qproperty(QString, surface)]
         #[qproperty(QString, text)]
         #[qproperty(QString, muted)]
         #[qproperty(QString, accent)]
@@ -33,11 +35,27 @@ pub mod qobject {
         #[qproperty(i32, block_spacing)]
         type Theme = super::ThemeRust;
     }
+
+    #[auto_cxx_name]
+    extern "RustQt" {
+        /// The column the document is set in, given the width there is to set it in.
+        /// Everything laid out down the middle of the window asks this — the blocks, the
+        /// bars across the foot — so that all of them are the same width as each other.
+        #[qinvokable]
+        fn column_width(self: &Theme, available: f64) -> f64;
+    }
+}
+
+use qobject::Theme;
+
+impl Theme {
+    fn column_width(&self, available: f64) -> f64 {
+        f64::from(*self.content_width()).min(available - COLUMN_MARGIN)
+    }
 }
 
 pub struct ThemeRust {
     background: QString,
-    surface: QString,
     text: QString,
     muted: QString,
     accent: QString,
@@ -60,7 +78,6 @@ impl Default for ThemeRust {
     fn default() -> Self {
         Self {
             background: QString::from("#FAFAF7"),
-            surface: QString::from("#FFFFFE"),
             text: QString::from("#2D2A26"),
             muted: QString::from("#8A8378"),
             accent: QString::from("#2F6F4E"),

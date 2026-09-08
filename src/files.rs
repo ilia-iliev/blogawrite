@@ -1,9 +1,22 @@
+//! Reaching the filesystem: replacing a file without ever leaving a half-written one
+//! behind, and finding the directories the XDG specification puts things in.
+
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+/// A directory of the XDG base directory specification: whatever the session set
+/// `variable` to, or the place under `$HOME` the specification falls back to. Nothing at
+/// all where there is no home to fall back to either.
+pub fn xdg_dir(variable: &str, fallback: &str) -> Option<PathBuf> {
+    match std::env::var_os(variable) {
+        Some(dir) => Some(PathBuf::from(dir)),
+        None => Some(PathBuf::from(std::env::var_os("HOME")?).join(fallback)),
+    }
+}
 
 /// Replace `path` atomically with `contents`. The temporary file sits beside the target,
 /// so rename cannot cross filesystems. Existing permissions are retained.
@@ -76,7 +89,7 @@ mod tests {
     #[test]
     fn replaces_a_file_without_leaving_the_temporary_one() {
         let directory = std::env::temp_dir().join(format!(
-            "blogawrite-storage-{}-{}",
+            "blogawrite-files-{}-{}",
             std::process::id(),
             TEMP_ID.fetch_add(1, Ordering::Relaxed)
         ));

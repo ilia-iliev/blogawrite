@@ -6,7 +6,7 @@ Blogawrite explicitly requires a filename and opens one file at a time. The tili
 Blogawrite supports the main Markdown primitives such as inline and code blocks, links, headings, and images:
 
 
-![screenshot of blogawrite](docs/screenshot.png)
+![screenshot of blogawrite](packaging/screenshot.png)
 
 *The block with the live cursor is raw Markdown where rendering doesn't make sense*
 

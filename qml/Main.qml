@@ -48,171 +48,21 @@ Window {
         cacheBuffer: 800
         boundsBehavior: Flickable.StopAtBounds
 
-        delegate: Item {
-            id: block
-
-            required property int index
-            required property string text
-            required property string rendered
-            required property string kind
-            required property string imagePath
-
-            readonly property bool cursorHere: index === doc.activeIndex
-            // The block with the cursor is an editor, and so is the one a selection
-            // running out of it is anchored in: that one has its own share of it to show.
-            readonly property bool editing: cursorHere || index === doc.selectionAnchor
-            // The far end of a selection running through this block, when there is one.
-            readonly property int otherEnd: index === doc.activeIndex ? doc.selectionAnchor
-                                                                     : doc.activeIndex
-            readonly property int selectionLast: Math.max(doc.selectionAnchor, doc.activeIndex)
-            readonly property bool selected: doc.selectionAnchor >= 0
-                && index >= Math.min(doc.selectionAnchor, doc.activeIndex)
-                && index <= selectionLast
-            // The blocks between the two ends are covered whole. They stay rendered
-            // rather than opening up: they have no partial share of the selection to show.
-            readonly property bool covered: selected && index !== doc.activeIndex
-                                                     && index !== doc.selectionAnchor
-            // Where this block was last clicked, handed to the editor it opens.
-            property point tapPoint: Qt.point(-1, -1)
-
-            width: ListView.view.width
-            height: column.height
-
-            // The click is spent as soon as the cursor is placed by it: a selection that
-            // comes back to this block afterwards must not land on it a second time.
-            onCursorHereChanged: {
-                if (!cursorHere) {
-                    tapPoint = Qt.point(-1, -1)
-                }
-            }
-
-            // Used to hand the keyboard back after the close prompt has had it.
-            function refocus() {
-                if (loader.item) {
-                    loader.item.forceActiveFocus()
-                }
-            }
-
-            // A block the selection covers whole, behind it: the block itself swaps its
-            // ink for the paper colour to sit on this.
-            Rectangle {
-                visible: block.covered
-                x: column.x
-                width: column.width
-                height: block.height
-                color: Theme.text
-            }
-
-            // The gap to the next block, filled in when the selection runs on through
-            // it, so that a selection over several blocks reads as one.
-            Rectangle {
-                visible: block.selected && block.index < block.selectionLast
-                x: column.x
-                width: column.width
-                y: block.height
-                height: Theme.blockSpacing
-                color: Theme.text
-            }
-
-            Column {
-                id: column
-
-                x: (parent.width - width) / 2
-                width: Math.min(Theme.contentWidth, parent.width - 64)
-                spacing: 8
-
-                // A lone image keeps its picture even while its markdown is being edited.
-                Loader {
-                    width: parent.width
-                    height: item ? item.implicitHeight : 0
-                    active: block.kind === "image"
-                    sourceComponent: imageBlock
-                }
-
-                Loader {
-                    id: loader
-
-                    width: parent.width
-                    height: item ? item.implicitHeight : 0
-                    active: block.editing || block.kind !== "image"
-                    sourceComponent: block.editing ? activeBlock : renderedBlock
-                }
-            }
-
-            Component {
-                id: renderedBlock
-                RenderedBlock {
-                    source: block.rendered
-                    selected: block.covered
-                    documentBase: doc.baseUrl
-                    onActivated: (at) => {
-                        block.tapPoint = at
-                        doc.activate(block.index)
-                    }
-                }
-            }
-
-            Component {
-                id: imageBlock
-                ImageBlock {
-                    imagePath: block.imagePath
-                    documentBase: doc.baseUrl
-                    onActivated: doc.activate(block.index)
-                }
-            }
-
-            Component {
-                id: activeBlock
-                ActiveBlock {
-                    id: editor
-
-                    source: block.text
-                    kind: block.kind
-                    current: block.cursorHere
-                    anchoredAt: block.index === doc.selectionAnchor ? doc.selectionPosition : -1
-                    beyond: doc.selectionAnchor < 0 ? ""
-                          : block.otherEnd > block.index ? "below"
-                          : block.otherEnd < block.index ? "above" : "here"
-                    initialPosition: doc.pendingCursor
-                    initialPoint: block.tapPoint
-                    lintAt: doc.lintAt
-                    lintLength: doc.lintLength
-                    lintReplacement: doc.lintReplacement
-                    lintWord: doc.lintWord
-                    searching: doc.searchActive
-                    searchAt: doc.searchAt
-                    searchSerial: doc.searchSerial
-                    onEdited: (body, cursor) => doc.setBlockText(block.index, body, cursor)
-                    onCursorMoved: (cursor) => doc.setCursorPosition(block.index, cursor)
-                    onUndoRequested: doc.undo()
-                    onSplit: (before, after) => doc.splitBlock(block.index, before, after)
-                    onMergeRequested: doc.mergeWithPrevious(block.index)
-                    onLeave: (direction) => doc.moveTo(block.index + direction, direction)
-                    onExtend: (direction, from) => doc.selectTo(block.index + direction, from)
-                    onCollapse: (at) => doc.clearSelection(at)
-                    onSelectAllRequested: {
-                        doc.selectAll()
-                        // The cursor lands at the foot of the document. If that is this
-                        // block, no new editor is made to put it there, so it sees to
-                        // its own share of the selection.
-                        if (doc.activeIndex === block.index) {
-                            editor.selectAll()
-                        }
-                    }
-                    onTapped: doc.activate(block.index)
-                    onCopyRequested: (at) => clipboard.take(doc.selectionText(at))
-                    onDeleteRequested: (at, insert) => doc.deleteSelection(at, insert)
-                    onCycleLintRequested: (direction) => doc.cycleLint(direction)
-                    onLearnRequested: (word) => CheckerWatch.learn(word)
-                    onSearchRequested: search.open()
-                    onSettledChanged: doc.settle(editor.settled)
-                }
-            }
+        delegate: Block {
+            document: doc
+            onCopyRequested: (body) => clipboard.take(body)
+            onSearchRequested: search.open()
         }
 
         // Hand the keyboard back to the block being edited. A Controls Popup returned it
         // by itself; this one has to be asked.
         function refocusActive() {
+            // There is no editor to hand it back to while the document is being read;
+            // the keys that move about it are answered outside the view instead.
+            if (doc.reading) {
+                reader.forceActiveFocus()
+                return
+            }
             const item = view.itemAtIndex(doc.activeIndex)
             if (item) {
                 item.refocus()
@@ -243,6 +93,12 @@ Window {
         // Page through the document a screenful at a time. The block at the far edge stays
         // selected and lands on the near edge, so nothing between the two screenfuls is missed.
         function page(direction) {
+            // Reading has no cursor to carry along, so the view is all that moves.
+            if (doc.reading) {
+                view.scroll(direction * view.height * 0.9)
+                return
+            }
+
             const anchor = view.edgeIndex(direction)
             if (anchor < 0) {
                 return
@@ -254,9 +110,15 @@ Window {
                                      direction > 0 ? ListView.Beginning : ListView.End)
             // A block taller than the window has no far edge to travel to: scroll inside it.
             if (direction * (view.contentY - before) <= 0) {
-                view.contentY = before + direction * view.height * 0.9
-                view.returnToBounds()
+                view.contentY = before
+                view.scroll(direction * view.height * 0.9)
             }
+        }
+
+        // Move the view by `distance`, stopping at the ends of the document.
+        function scroll(distance) {
+            view.contentY += distance
+            view.returnToBounds()
         }
 
         function scrollingWithin(item) {
@@ -290,6 +152,14 @@ Window {
             function onActiveIndexChanged() {
                 Qt.callLater(view.showActive)
                 settle.restart()
+            }
+
+            // Reading moves the view and not the cursor, so coming back out brings the
+            // view back to it — and the editor that opens there takes the keyboard.
+            function onReadingChanged() {
+                if (!doc.reading) {
+                    Qt.callLater(view.showActive)
+                }
             }
         }
     }
@@ -341,6 +211,50 @@ Window {
         }
     }
 
+    // Reading mode has no editor to hold the keyboard, so the keys that move about the
+    // document are answered here. The blocks below are rendered and take none of them.
+    Item {
+        id: reader
+
+        anchors.fill: parent
+        focus: doc.reading
+
+        // One line of prose: what an arrow key moves the page by.
+        readonly property real step: Theme.bodySize * Theme.lineHeight
+
+        Keys.onPressed: (event) => {
+            switch (event.key) {
+            case Qt.Key_R:
+                if (event.modifiers === Qt.ControlModifier) {
+                    event.accepted = true
+                    doc.toggleReading()
+                }
+                break
+            case Qt.Key_Up:
+            case Qt.Key_Down:
+                event.accepted = true
+                view.scroll(event.key === Qt.Key_Down ? reader.step : -reader.step)
+                break
+            }
+        }
+    }
+
+    // Which of the two things the window is doing that it would otherwise not show. A
+    // screenful with no cursor in it looks the same read as written — every block but
+    // one is rendered either way — and a key typed into reading mode does nothing. The
+    // checker turned off is worth saying for as long as it is off for its own reason:
+    // on a paragraph with nothing wrong in it, the marks going away is no answer at all.
+    Text {
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.margins: 12
+        visible: text !== ""
+        text: doc.reading ? qsTr("reading") : doc.checking ? "" : qsTr("checking off")
+        color: Theme.muted
+        font.family: Theme.bodyFamily
+        font.pixelSize: Theme.bodySize
+    }
+
     // Content scrolls under the window edge; fade it out rather than cutting it dead.
     Rectangle {
         anchors.left: parent.left
@@ -355,21 +269,12 @@ Window {
 
     // File errors must be visible when the app was launched from a desktop entry, where
     // stderr has nowhere useful to go.
-    Rectangle {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        height: fileError.height + 16
-        color: Theme.promptBackground
+    FootBar {
         visible: doc.errorMessage !== ""
         z: 2
 
         Text {
-            id: fileError
-
-            x: (parent.width - width) / 2
-            y: 8
-            width: Math.min(Theme.contentWidth, parent.width - 64)
+            width: parent.width
             text: doc.errorMessage
             wrapMode: Text.WordWrap
             color: Theme.promptText
@@ -380,20 +285,11 @@ Window {
 
     // What the checker makes of where the cursor is standing, at the foot of the window.
     // The wash on the words says that something is wrong with them; this says what.
-    Rectangle {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        height: lint.height + 16
-        color: Theme.promptBackground
+    FootBar {
         visible: doc.lintMessage !== "" && !doc.searchActive
 
         Text {
-            id: lint
-
-            x: (parent.width - width) / 2
-            y: 8
-            width: Math.min(Theme.contentWidth, parent.width - 64)
+            width: parent.width
             // The checker writes its messages in markdown, with the words it is talking
             // about in backticks, and the suggestion is put in the same voice. One with
             // nothing in it is a suggestion to take the words out.
@@ -429,137 +325,11 @@ Window {
         }
     }
 
-    // Find a word in the document. The bar holds the keyboard while it is open — the
-    // writer is still typing what they are looking for — and each occurrence it walks to
-    // is selected by the cursor in the text above. Opened from the block being edited,
-    // which sees the keystroke first; closed from in here.
-    Rectangle {
+    SearchBar {
         id: search
 
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        height: bar.height + 16
-        color: Theme.promptBackground
-        visible: doc.searchActive
-        // Above the block being edited and above a file error, which is what the writer
-        // asked for by opening this; both are back the moment it closes.
-        z: 3
-
-        function open() {
-            doc.openSearch()
-            needle.forceActiveFocus()
-            // Re-opened on the word looked for last time: it is found again straight
-            // away, and typing replaces it rather than adding to it.
-            needle.selectAll()
-            doc.searchFor(needle.text)
-        }
-
-        function close() {
-            doc.closeSearch()
-            view.refocusActive()
-        }
-
-        Item {
-            id: bar
-
-            x: (parent.width - width) / 2
-            y: 8
-            width: Math.min(Theme.contentWidth, window.width - 64)
-            height: needle.height
-
-            Text {
-                id: label
-
-                anchors.verticalCenter: parent.verticalCenter
-                text: qsTr("find")
-                color: Theme.muted
-                font.family: Theme.monoFamily
-                font.pixelSize: Theme.bodySize
-            }
-
-            TextInput {
-                id: needle
-
-                anchors.left: label.right
-                anchors.leftMargin: 12
-                anchors.right: counter.left
-                anchors.rightMargin: 12
-                color: Theme.promptText
-                selectionColor: Theme.promptText
-                selectedTextColor: Theme.promptBackground
-                selectByMouse: true
-                // The window is not always the one the compositor calls active, and a
-                // TextInput throws its selection away the moment it is not: without this,
-                // the word left over from last time is not there to be typed over.
-                persistentSelection: true
-                font.family: Theme.monoFamily
-                font.pixelSize: Theme.bodySize
-
-                onTextChanged: doc.searchFor(text)
-
-                Keys.onPressed: (event) => {
-                    switch (event.key) {
-                    // Either way of saying the word is typed: the bar goes away and
-                    // the cursor is left on the occurrence the search walked to.
-                    case Qt.Key_Escape:
-                    case Qt.Key_Return:
-                    case Qt.Key_Enter:
-                        event.accepted = true
-                        search.close()
-                        break
-                    case Qt.Key_Z:
-                        // Undo is the document's. Taken here so that a TextInput holding
-                        // the keyboard does not answer it by unwinding the word typed
-                        // into it, which is not something the writer wrote.
-                        if (event.modifiers & Qt.ControlModifier) {
-                            event.accepted = true
-                        }
-                        break
-                    case Qt.Key_F:
-                        if (event.modifiers === Qt.ControlModifier) {
-                            event.accepted = true
-                            search.close()
-                        }
-                        break
-                    case Qt.Key_Up:
-                    case Qt.Key_Down:
-                        if (event.modifiers === Qt.ControlModifier) {
-                            event.accepted = true
-                            doc.cycleSearch(event.key === Qt.Key_Down ? 1 : -1)
-                        }
-                        break
-                    }
-                }
-            }
-
-            // Which occurrence of how many. Asking for another one of a word that has
-            // only the one moves nothing, so that answer is given here instead — and
-            // given as an answer, on a ground of its own, rather than as a count.
-            Rectangle {
-                id: counter
-
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                width: note.width + (doc.searchAlone ? 16 : 0)
-                height: note.height + (doc.searchAlone ? 6 : 0)
-                radius: 3
-                color: doc.searchAlone ? Theme.accent : "transparent"
-
-                Text {
-                    id: note
-
-                    anchors.centerIn: parent
-                    text: needle.text === "" ? ""
-                        : doc.searchAlone ? qsTr("only one")
-                        : doc.searchCount === 0 ? qsTr("no matches")
-                        : (doc.searchChoice + 1) + "/" + doc.searchCount
-                    color: doc.searchAlone ? Theme.promptText : Theme.muted
-                    font.family: Theme.monoFamily
-                    font.pixelSize: Theme.bodySize
-                }
-            }
-        }
+        document: doc
+        onClosed: view.refocusActive()
     }
 
     Shortcut { sequences: [StandardKey.Save]; onActivated: doc.save() }
@@ -575,102 +345,10 @@ Window {
         }
     }
 
-    // A prompt line at the foot of the window rather than a box of buttons.
-    Item {
+    ClosePrompt {
         id: closePrompt
 
-        anchors.fill: parent
-        visible: false
-
-        function open() {
-            visible = true
-            // It is answered by keystroke, so it has to hold the keyboard itself.
-            forceActiveFocus()
-        }
-
-        function cancel() {
-            visible = false
-            view.refocusActive()
-        }
-
-        function saveAndQuit() {
-            // A failed save keeps the window open rather than losing the text.
-            if (doc.save()) {
-                Qt.quit()
-            }
-        }
-
-        function discardAndQuit() {
-            // Nothing is written; clearing the flag just lets the close through.
-            doc.dirty = false
-            Qt.quit()
-        }
-
-        // Nothing behind it is to be clicked while it is up. This is the modality.
-        MouseArea {
-            anchors.fill: parent
-        }
-
-        Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            height: prompt.height + 24
-            color: Theme.promptBackground
-
-            // Two centred lines: the question, then the keys that answer it.
-            Column {
-                id: prompt
-
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: 12
-                spacing: 4
-
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: qsTr("Save changes?")
-                    color: Theme.promptText
-                    font.family: Theme.monoFamily
-                    font.pixelSize: Theme.bodySize
-                }
-
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: Math.min(Theme.contentWidth, window.width - 64)
-                    visible: doc.errorMessage !== ""
-                    text: doc.errorMessage
-                    wrapMode: Text.WordWrap
-                    horizontalAlignment: Text.AlignHCenter
-                    color: Theme.promptText
-                    font.family: Theme.bodyFamily
-                    font.pixelSize: Theme.bodySize
-                }
-
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: qsTr("[y] [n] [esc]")
-                    color: Theme.promptText
-                    font.family: Theme.monoFamily
-                    font.pixelSize: Theme.bodySize
-                }
-            }
-        }
-
-        Keys.onPressed: (event) => {
-            event.accepted = true
-            switch (event.key) {
-            case Qt.Key_Y:
-            case Qt.Key_Return:
-            case Qt.Key_Enter:
-                closePrompt.saveAndQuit()
-                break
-            case Qt.Key_N:
-                closePrompt.discardAndQuit()
-                break
-            case Qt.Key_Escape:
-                closePrompt.cancel()
-                break
-            }
-        }
+        document: doc
+        onCancelled: view.refocusActive()
     }
 }

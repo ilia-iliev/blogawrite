@@ -39,11 +39,11 @@ impl Search {
         if count < 2 {
             return None;
         }
-        self.choice = (self.choice as i32 + direction).rem_euclid(count as i32) as usize;
+        self.choice = wrapped(self.choice as i32, direction, count as i32) as usize;
         self.showing()
     }
 
-    pub fn showing(&self) -> Option<Occurrence> {
+    fn showing(&self) -> Option<Occurrence> {
         self.found.get(self.choice).copied()
     }
 
@@ -60,6 +60,13 @@ impl Search {
         self.found.clear();
         self.choice = 0;
     }
+}
+
+/// The choice `direction` away from the one on show, out of `count` of them. They wrap
+/// around: the occurrences of a word are walked until one of them is the one meant, and
+/// the suggestions the checker offers for a word are walked the same way.
+pub fn wrapped(choice: i32, direction: i32, count: i32) -> i32 {
+    (choice + direction).rem_euclid(count)
 }
 
 /// Every occurrence of `needle`, in document order, ignoring case. Occurrences do not
@@ -123,6 +130,18 @@ mod tests {
     /// blocks, and a word that turns up once.
     fn marked() -> Vec<Arc<String>> {
         document("One marker here.\n\nTwo marker there.\n\nA solitary marker word.")
+    }
+
+    #[test]
+    fn walks_a_ring_of_choices_both_ways() {
+        assert_eq!(wrapped(0, 1, 4), 1);
+        assert_eq!(wrapped(2, -1, 4), 1);
+    }
+
+    #[test]
+    fn comes_back_round_the_ring_at_either_end() {
+        assert_eq!(wrapped(3, 1, 4), 0);
+        assert_eq!(wrapped(0, -1, 4), 3);
     }
 
     #[test]

@@ -48,9 +48,13 @@ fn main() {
             rust_files: &["src/document.rs", "src/theme.rs"],
             qml_files: &[
                 "qml/Main.qml",
+                "qml/Block.qml",
                 "qml/RenderedBlock.qml",
                 "qml/ActiveBlock.qml",
                 "qml/ImageBlock.qml",
+                "qml/FootBar.qml",
+                "qml/SearchBar.qml",
+                "qml/ClosePrompt.qml",
             ],
             ..Default::default()
         })

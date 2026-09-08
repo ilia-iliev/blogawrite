@@ -12,7 +12,9 @@ struct Speller {
 /// The file the writer's own words are kept in — names, jargon, the title of the thing
 /// they are writing about — one per line, `#` for a comment.
 fn personal_path() -> Option<PathBuf> {
-    Some(config_home()?.join("blogawrite").join("dictionary"))
+    Some(crate::files::xdg_dir("XDG_CONFIG_HOME", ".config")?
+        .join("blogawrite")
+        .join("dictionary"))
 }
 
 fn personal_words() -> HashSet<String> {
@@ -27,13 +29,6 @@ fn personal_words() -> HashSet<String> {
         .filter(|word| !word.is_empty() && !word.starts_with('#'))
         .map(str::to_string)
         .collect()
-}
-
-fn config_home() -> Option<PathBuf> {
-    match std::env::var_os("XDG_CONFIG_HOME") {
-        Some(dir) => Some(PathBuf::from(dir)),
-        None => Some(PathBuf::from(std::env::var_os("HOME")?).join(".config")),
-    }
 }
 
 /// Harper's American-English dictionary is compiled into the program. Keep one handle to
@@ -89,7 +84,7 @@ fn remember(path: &Path, word: &str) {
     text.push_str(word);
     text.push('\n');
 
-    crate::storage::replace(path, text.as_bytes());
+    crate::files::replace(path, text.as_bytes());
 }
 
 #[cfg(test)]

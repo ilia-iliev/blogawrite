@@ -9,7 +9,7 @@
 # Each run opens a real window for a couple of seconds and takes the focus with it.
 #
 #     tools/profile-render.sh                       # the sample post, five runs
-#     tools/profile-render.sh -n 10 test.md
+#     tools/profile-render.sh -n 10 sample/post.md
 #     QT_QUICK_BACKEND=rhi tools/profile-render.sh  # against the OpenGL path
 #
 # The app inherits this shell's environment, so a variable set out here is one more thing

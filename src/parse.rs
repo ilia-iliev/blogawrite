@@ -169,6 +169,7 @@ pub fn rendered(block: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     /// The blocks of `source`, which is what the model is built out of. An empty
     /// document is one empty block, so that there is always somewhere to type.
@@ -185,15 +186,12 @@ mod tests {
         segment(source).join("\n\n")
     }
 
-    /// The document put back together byte for byte, which is what saving does.
+    /// The document put back together byte for byte, which is what saving does — by way
+    /// of the very code that does it, so that the two cannot drift apart.
     fn exact_roundtrip(source: &str) -> String {
         let Segments { blocks, gaps } = segments(source);
-        let mut text = gaps[0].clone();
-        for (index, block) in blocks.iter().enumerate() {
-            text.push_str(block);
-            text.push_str(&gaps[index + 1]);
-        }
-        text
+        let shared = |parts: Vec<String>| parts.into_iter().map(Arc::new).collect::<Vec<_>>();
+        crate::blocks::source(&shared(blocks), &shared(gaps))
     }
 
     #[test]

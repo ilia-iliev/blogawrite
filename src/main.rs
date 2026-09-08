@@ -1,11 +1,11 @@
 pub mod blocks;
+pub mod cursors;
 pub mod document;
+pub mod files;
 pub mod lint;
 pub mod parse;
 pub mod search;
 pub mod spell;
-pub mod state;
-pub mod storage;
 pub mod style;
 pub mod text;
 pub mod theme;

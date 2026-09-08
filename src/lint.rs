@@ -1,13 +1,11 @@
-use crate::parse;
+mod prose;
+
 use crate::spell;
-use crate::text::{utf16_at, utf16_offsets};
-use harper_core::linting::{LintGroup, LintKind, Linter, Suggestion};
+use harper_core::linting::LintGroup;
 use harper_core::spell::FstDictionary;
-use harper_core::{Dialect, Document, TokenKind};
-use pulldown_cmark::{Event, Parser, Tag};
+use harper_core::Dialect;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::ops::Range;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 
 #[cxx::bridge(namespace = "blogawrite")]
@@ -56,12 +54,6 @@ mod ffi {
 
 pub use ffi::Lint;
 
-/// Punctuation that only ever joins one thing to another. A word with one of these hard
-/// against it is part of `snake_case`, a path or an address rather than a piece of prose.
-/// The full stop that ends a sentence joins nothing to anything, and the word in front of
-/// it is checked like any other.
-const JOINS: [char; 5] = ['.', '/', ':', '@', '_'];
-
 const CACHE_LIMIT: usize = 256;
 
 type CheckKey = (String, bool);
@@ -81,6 +73,10 @@ struct Checker {
 
 static CHECKER: OnceLock<Checker> = OnceLock::new();
 static GENERATION: AtomicU64 = AtomicU64::new(0);
+/// Whether the writer wants to hear from the checker at all. They are writing; being told
+/// what is wrong with a sentence half-thought is not always help, so it can be turned off
+/// and on from the keyboard. On to begin with — that is what the checker is there for.
+static CHECKING: AtomicBool = AtomicBool::new(true);
 
 /// Build the checker on threads of its own, so that the four hundred milliseconds it
 /// takes are spent while Qt is still bringing itself up.
@@ -113,7 +109,7 @@ pub fn preload() {
         GENERATION.fetch_add(1, Ordering::Release);
 
         for key in receive {
-            let found = run(&group, &key.0, key.1);
+            let found = prose::run(&group, &key.0, key.1);
             remember_check(&mut cache.lock().unwrap(), key, found);
             GENERATION.fetch_add(1, Ordering::Release);
         }
@@ -124,6 +120,23 @@ fn checker_ready() -> bool {
     CHECKER.get().is_some() && spell::ready()
 }
 
+pub fn checking() -> bool {
+    CHECKING.load(Ordering::Acquire)
+}
+
+/// Turn the checker off, or on again. What was found while it was on is kept — the
+/// blocks are the same blocks — so putting it back on marks them again without waiting.
+/// The generation moves either way: that is what has the blocks on screen look again.
+pub fn set_checking(on: bool) {
+    CHECKING.store(on, Ordering::Release);
+    GENERATION.fetch_add(1, Ordering::Release);
+}
+
+/// The checker, when there is anything to be had from it: loaded, and switched on.
+fn working() -> Option<&'static Checker> {
+    CHECKER.get().filter(|_| spell::ready() && checking())
+}
+
 fn checker_generation() -> u64 {
     GENERATION.load(Ordering::Acquire)
 }
@@ -131,7 +144,7 @@ fn checker_generation() -> u64 {
 /// Return findings already worked out for this block. A miss schedules one and returns
 /// immediately; the generation change has Qt ask again when the worker finishes.
 pub fn request_check(text: &str, markdown: bool) -> Vec<Lint> {
-    let Some(checker) = CHECKER.get().filter(|_| spell::ready()) else {
+    let Some(checker) = working() else {
         return Vec::new();
     };
     let key = (text.to_string(), markdown);
@@ -149,10 +162,10 @@ pub fn request_check(text: &str, markdown: bool) -> Vec<Lint> {
 /// [`request_check`] and never wait for Harper.
 #[cfg(test)]
 fn check(text: &str, markdown: bool) -> Vec<Lint> {
-    let Some(checker) = CHECKER.get().filter(|_| spell::ready()) else {
+    let Some(checker) = working() else {
         return Vec::new();
     };
-    run(&checker.group, text, markdown)
+    prose::run(&checker.group, text, markdown)
 }
 
 fn remember_check(cache: &mut CheckCache, key: CheckKey, found: Vec<Lint>) {
@@ -200,132 +213,11 @@ pub fn learn(word: &str) {
     }
 }
 
-fn run(group: &Mutex<LintGroup>, text: &str, markdown: bool) -> Vec<Lint> {
-    let document = if markdown {
-        Document::new_markdown_default_curated(text)
-    } else {
-        Document::new_plain_english_curated(text)
-    };
-    let offsets = utf16_offsets(text);
-    let characters: Vec<char> = text.chars().collect();
-
-    let mut found: Vec<Lint> = group
-        .lock()
-        .unwrap()
-        .lint(&document)
-        .into_iter()
-        // Spelling is handled below against Harper's built-in dictionary plus the
-        // writer's own words; the group's spelling rules would mark the same text twice.
-        .filter(|lint| !matches!(lint.lint_kind, LintKind::Spelling))
-        .filter_map(|lint| carry(lint, &offsets, &characters))
-        .collect();
-    found.extend(misspellings(&document, &offsets, &characters));
-    if markdown {
-        let left_alone = left_alone(text);
-        found.retain(|lint| !left_alone.iter().any(|part| overlaps(lint, part)));
-    }
-    found.sort_by_key(|lint| (lint.at, lint.len));
-    found
-}
-
-/// The parts of a block the checker has no business in, in the UTF-16 units a lint counts
-/// in: code, links and tables. None of it is prose — it is a name, an address, a column of
-/// figures — and a writer who has to spell it that way cannot take the advice anyway.
-fn left_alone(text: &str) -> Vec<Range<u32>> {
-    Parser::new_ext(text, parse::options())
-        .into_offset_iter()
-        .filter(|(event, _)| {
-            matches!(
-                event,
-                Event::Code(_)
-                    | Event::Start(Tag::CodeBlock(_) | Tag::Link { .. } | Tag::Table(_))
-            )
-        })
-        .map(|(_, bytes)| utf16_at(text, bytes.start)..utf16_at(text, bytes.end))
-        .collect()
-}
-
-/// Whether a lint has any of itself inside `part`.
-fn overlaps(lint: &Lint, part: &Range<u32>) -> bool {
-    lint.at < part.end && part.start < lint.at + lint.len
-}
-
-/// The words of a block the dictionary does not know. Which of the text is prose, harper
-/// has already worked out: an address is a token of its own and not a word, so the
-/// question is never asked about it. What is left over, [`left_alone`] takes out.
-fn misspellings(document: &Document, offsets: &[u32], characters: &[char]) -> Vec<Lint> {
-    document
-        .get_tokens()
-        .iter()
-        .filter(|token| matches!(token.kind, TokenKind::Word(_)))
-        .map(|token| token.span.start..token.span.end)
-        .filter(|span| checkable(span.clone(), characters))
-        .filter_map(|span| {
-            let word: String = characters[span.clone()].iter().collect();
-            if spell::known(&word) {
-                return None;
-            }
-            let at = *offsets.get(span.start)?;
-            let end = *offsets.get(span.end)?;
-            Some(Lint {
-                at,
-                len: end - at,
-                message: format!("`{word}` is not in the dictionary."),
-                replacements: Vec::new(),
-                word,
-                pending: true,
-            })
-        })
-        .collect()
-}
-
-/// Whether a word harper found is one to ask the dictionary about. A single letter is
-/// never worth flagging, and anything with a digit in it is a name for something rather
-/// than a word: `h1`, `3rd`, `utf8`. What sits either side of it counts too — see [`JOINS`].
-fn checkable(span: Range<usize>, characters: &[char]) -> bool {
-    let word = &characters[span.clone()];
-    if word.len() < 2 || word.iter().any(|c| c.is_numeric() || JOINS.contains(c)) {
-        return false;
-    }
-    let before = span.start.checked_sub(1).and_then(|i| characters.get(i));
-    if before.is_some_and(|c| JOINS.contains(c)) {
-        return false;
-    }
-    let after = characters.get(span.end);
-    let beyond = characters.get(span.end + 1);
-    !(after.is_some_and(|c| JOINS.contains(c)) && beyond.is_some_and(|c| c.is_alphanumeric()))
-}
-
-/// A harper lint in the terms the editor works in: UTF-16 offsets, and for each
-/// suggestion the one piece of text that should stand where the lint is, whichever shape
-/// the suggestion took. Taking the words out is a piece of text like any other — an
-/// empty one.
-fn carry(lint: harper_core::linting::Lint, offsets: &[u32], characters: &[char]) -> Option<Lint> {
-    let at = *offsets.get(lint.span.start)?;
-    let end = *offsets.get(lint.span.end)?;
-    let marked = characters.get(lint.span.start..lint.span.end)?;
-    let replacements = lint
-        .suggestions
-        .iter()
-        .map(|suggestion| match suggestion {
-            Suggestion::ReplaceWith(with) => with.iter().collect(),
-            Suggestion::InsertAfter(after) => marked.iter().chain(after.iter()).collect(),
-            Suggestion::Remove => String::new(),
-        })
-        .collect();
-    Some(Lint {
-        at,
-        len: end - at,
-        message: lint.message,
-        replacements,
-        word: String::new(),
-        pending: false,
-    })
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::MutexGuard;
 
     /// The piece of `text` a lint covers, taken in the UTF-16 units the lint counts in.
     fn covered(text: &str, lint: &Lint) -> String {
@@ -337,17 +229,21 @@ mod tests {
         String::from_utf16_lossy(&units)
     }
 
-    /// The checker loads on threads of its own; the tests share one and wait for it once.
-    fn checker() {
+    /// The checker loads on threads of its own, and the switch that turns it off is one
+    /// thing for the whole editor. The tests share both: each waits for the one and takes
+    /// the other for as long as it holds what this hands back.
+    fn checker() -> MutexGuard<'static, ()> {
         preload();
         while !checker_ready() {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+        TURN.lock().unwrap_or_else(|held| held.into_inner())
     }
+
+    static TURN: Mutex<()> = Mutex::new(());
 
     /// The lints of a block, as (what they cover, what is offered for it).
     fn found(text: &str) -> Vec<(String, Vec<String>)> {
-        checker();
         check(text, true)
             .into_iter()
             .map(|lint| {
@@ -364,7 +260,6 @@ mod tests {
 
     /// What the block covers and what it offers where the cursor is standing.
     fn under_cursor(text: &str, cursor: i32) -> Option<(String, Vec<String>)> {
-        checker();
         let lint = at(text, cursor)?;
         Some((covered(text, &lint), lint.replacements))
     }
@@ -375,6 +270,7 @@ mod tests {
 
     #[test]
     fn finds_a_typo_and_offers_what_was_meant() {
+        let _turn = checker();
         let (word, offered) = under_cursor("I recieve mail.", 4).expect("the typo is found");
         assert_eq!(word, "recieve");
         assert!(offered.contains(&"receive".to_string()), "{offered:?}");
@@ -382,7 +278,7 @@ mod tests {
 
     #[test]
     fn finds_a_turn_of_phrase_and_offers_what_was_meant() {
-        checker();
+        let _turn = checker();
         let (phrase, offered) =
             under_cursor("This is very unique writing.", 14).expect("the phrase is found");
         assert_eq!(phrase, "very unique");
@@ -394,6 +290,7 @@ mod tests {
     /// each covering its own words and each with something to put there.
     #[test]
     fn marks_a_typo_and_a_phrase_the_same_way() {
+        let _turn = checker();
         let lints = found("This is very unique and I recieve it.");
         let covering: Vec<String> = lints.iter().map(|(word, _)| word.clone()).collect();
         assert_eq!(covering, ["very unique", "recieve"]);
@@ -404,6 +301,7 @@ mod tests {
 
     #[test]
     fn leaves_alone_what_was_not_written_as_prose() {
+        let _turn = checker();
         assert_eq!(covers("Call `recieve_this` now."), Vec::<String>::new());
         assert_eq!(covers("Read\n\n```\nrecieve\n```\n"), Vec::<String>::new());
         assert_eq!(covers("See [the exampel](http://a.test/pge)."), Vec::<String>::new());
@@ -419,17 +317,19 @@ mod tests {
     /// Only the link itself is left alone; the sentence it stands in is prose like any other.
     #[test]
     fn keeps_the_prose_a_link_stands_in() {
+        let _turn = checker();
         assert_eq!(covers("A tpyo beside [a link](http://a.test/pge)."), ["tpyo"]);
     }
 
     #[test]
     fn keeps_the_full_stop_that_ends_a_sentence() {
+        let _turn = checker();
         assert_eq!(covers("A tpyo. Another sentence."), ["tpyo"]);
     }
 
     #[test]
     fn counts_positions_the_way_qt_does() {
-        checker();
+        let _turn = checker();
         // The emoji is two UTF-16 units, so the word after it starts at 3, not 2.
         let lints = check("🙂 recieve it.", true);
         assert_eq!(lints.len(), 1);
@@ -440,15 +340,54 @@ mod tests {
     /// the typo offers the typo: the narrower lint is the one that names those words.
     #[test]
     fn offers_the_narrowest_thing_the_cursor_is_standing_in() {
-        checker();
+        let _turn = checker();
         let text = "This is very unique writing.";
         let (whole, _) = under_cursor(text, 8).expect("the phrase is found");
         assert_eq!(whole, "very unique");
     }
 
+    /// The switch is the writer telling the checker to keep its opinions to itself:
+    /// nothing is marked and nothing is offered until they ask for it again.
+    #[test]
+    fn says_nothing_at_all_while_the_checking_is_off() {
+        let _turn = checker();
+        set_checking(false);
+        let quiet = covers("I recieve mail.");
+        let offered = at("I recieve mail.", 4);
+        set_checking(true);
+        assert_eq!(quiet, Vec::<String>::new());
+        assert!(offered.is_none());
+        assert_eq!(covers("I recieve mail."), ["recieve"]);
+    }
+
+    /// The wash on the words is drawn from the other entry point, and the blocks are only
+    /// told to look again by the generation moving — so turning the switch has to move it.
+    #[test]
+    fn takes_the_wash_off_the_words_as_well() {
+        let _turn = checker();
+        // What the highlighters ask. The first ask only schedules the work.
+        while request_check("I recieve mail.", true).is_empty() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let generation = checker_generation();
+        set_checking(false);
+        let quiet = request_check("I recieve mail.", true);
+        let moved = checker_generation() != generation;
+        set_checking(true);
+        assert!(quiet.is_empty(), "{} left marked", quiet.len());
+        assert!(moved, "the blocks were never told to look again");
+        assert!(!request_check("I recieve mail.", true).is_empty());
+    }
+
+    #[test]
+    fn checks_until_it_is_told_not_to() {
+        let _turn = checker();
+        assert!(checking());
+    }
+
     #[test]
     fn says_nothing_where_there_is_nothing_wrong() {
-        checker();
+        let _turn = checker();
         assert!(at("This sentence is fine.", 3).is_none());
         assert!(covers("This sentence is fine.").is_empty());
     }

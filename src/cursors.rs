@@ -1,3 +1,6 @@
+//! Where the cursor was left in each file, so that opening one again picks up where
+//! the last session put it down.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -5,11 +8,9 @@ use std::path::{Path, PathBuf};
 const LIMIT: usize = 200;
 
 fn store() -> Option<PathBuf> {
-    let base = match std::env::var_os("XDG_STATE_HOME") {
-        Some(dir) => PathBuf::from(dir),
-        None => PathBuf::from(std::env::var_os("HOME")?).join(".local/state"),
-    };
-    Some(base.join("blogawrite").join("cursors"))
+    Some(crate::files::xdg_dir("XDG_STATE_HOME", ".local/state")?
+        .join("blogawrite")
+        .join("cursors"))
 }
 
 fn entries() -> Vec<(String, i32)> {
@@ -49,5 +50,5 @@ pub fn remember(path: &Path, index: i32) {
         .iter()
         .map(|(path, index)| format!("{index}\t{path}\n"))
         .collect();
-    crate::storage::replace(&store, text.as_bytes());
+    crate::files::replace(&store, text.as_bytes());
 }
